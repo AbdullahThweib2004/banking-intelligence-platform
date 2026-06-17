@@ -1,0 +1,1 @@
+Abduallah --> Bank of Palestine

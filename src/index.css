@@ -1,0 +1,242 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Bank of Palestine Brand Colors */
+    --primary: 327 76% 41%; /* #B8187A magenta */
+    --primary-foreground: 0 0% 100%;
+    --primary-dark: 327 76% 32%;
+    --primary-light: 327 60% 55%;
+    --primary-glow: 327 80% 65%;
+    
+    --background: 240 20% 98%;
+    --foreground: 240 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 10% 30%;
+
+    --muted: 240 5% 94%;
+    --muted-foreground: 240 5% 45%;
+
+    --accent: 327 40% 95%;
+    --accent-foreground: 327 76% 35%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 327 76% 41%;
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 327 76% 41%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 327 76% 41%;
+    --sidebar-accent: 327 60% 50%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 327 50% 50%;
+    --sidebar-ring: 0 0% 100%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(327 76% 41%), hsl(327 76% 32%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(240 20% 98%));
+    --gradient-hero: linear-gradient(135deg, hsl(327 76% 41%) 0%, hsl(327 60% 55%) 50%, hsl(340 70% 50%) 100%);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(240 10% 10% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(240 10% 10% / 0.08), 0 2px 4px -1px hsl(240 10% 10% / 0.04);
+    --shadow-lg: 0 10px 15px -3px hsl(240 10% 10% / 0.1), 0 4px 6px -2px hsl(240 10% 10% / 0.05);
+    --shadow-xl: 0 20px 25px -5px hsl(240 10% 10% / 0.1), 0 10px 10px -5px hsl(240 10% 10% / 0.04);
+    --shadow-primary: 0 4px 14px 0 hsl(327 76% 41% / 0.3);
+    --shadow-card: 0 2px 8px 0 hsl(240 10% 10% / 0.06);
+  }
+
+  .dark {
+    --background: 240 10% 6%;
+    --foreground: 0 0% 95%;
+
+    --card: 240 10% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 240 10% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 327 70% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 16%;
+    --secondary-foreground: 0 0% 85%;
+
+    --muted: 240 5% 20%;
+    --muted-foreground: 240 5% 60%;
+
+    --accent: 327 40% 20%;
+    --accent-foreground: 327 60% 75%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 85% 55%;
+    --warning-foreground: 0 0% 10%;
+
+    --info: 199 80% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 240 5% 20%;
+    --input: 240 5% 20%;
+    --ring: 327 70% 55%;
+
+    --sidebar-background: 240 10% 8%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 327 70% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 5% 15%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 240 5% 18%;
+    --sidebar-ring: 327 70% 55%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(327 70% 55%), hsl(327 60% 45%));
+    --gradient-card: linear-gradient(180deg, hsl(240 10% 10%), hsl(240 10% 8%));
+    --shadow-primary: 0 4px 14px 0 hsl(327 70% 55% / 0.2);
+    --shadow-card: 0 2px 8px 0 hsl(0 0% 0% / 0.2);
+  }
+
+  [dir="rtl"] {
+    font-family: 'Cairo', sans-serif;
+  }
+
+  [dir="ltr"] {
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  .dashboard-card {
+    @apply bg-card rounded-xl border border-border p-6 transition-all duration-200;
+    box-shadow: var(--shadow-card);
+  }
+
+  .dashboard-card:hover {
+    box-shadow: var(--shadow-md);
+    @apply border-primary/20;
+  }
+
+  .stat-card {
+    @apply dashboard-card relative overflow-hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    @apply absolute inset-0 opacity-5;
+    background: var(--gradient-primary);
+  }
+
+  .gradient-text {
+    background: var(--gradient-hero);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .gradient-bg {
+    background: var(--gradient-primary);
+  }
+
+  .sidebar-gradient {
+    background: var(--gradient-hero);
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s ease-out forwards;
+  }
+
+  .animate-pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { 
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to { 
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from { 
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to { 
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% { 
+      box-shadow: 0 0 0 0 hsl(327 76% 41% / 0.4);
+    }
+    50% { 
+      box-shadow: 0 0 20px 10px hsl(327 76% 41% / 0);
+    }
+  }
+}
