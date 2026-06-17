@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -38,12 +38,12 @@ import {
   TrendingDown,
   AlertTriangle,
   CheckCircle2,
+  XCircle,
   Plus,
   Search,
   Filter,
   Download,
   Eye,
-  Send,
   Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -60,48 +60,29 @@ interface CreditApplication {
   employeeId: string;
 }
 
-const mockApplications: CreditApplication[] = [
-  {
-    id: 'APP-001',
-    customerName: 'أحمد محمد',
-    applicationDate: '2024-01-15',
-    loanAmount: 50000,
-    riskScore: 25,
-    riskCategory: 'low',
-    status: 'approved',
-    employeeId: 'EMP-001',
-  },
-  {
-    id: 'APP-002',
-    customerName: 'سارة أحمد',
-    applicationDate: '2024-01-14',
-    loanAmount: 150000,
-    riskScore: 68,
-    riskCategory: 'medium',
-    status: 'awaiting_approval',
-    employeeId: 'EMP-001',
-  },
-  {
-    id: 'APP-003',
-    customerName: 'محمد علي',
-    applicationDate: '2024-01-13',
-    loanAmount: 200000,
-    riskScore: 82,
-    riskCategory: 'high',
-    status: 'pending',
-    employeeId: 'EMP-002',
-  },
-  {
-    id: 'APP-004',
-    customerName: 'فاطمة خالد',
-    applicationDate: '2024-01-12',
-    loanAmount: 75000,
-    riskScore: 35,
-    riskCategory: 'low',
-    status: 'approved',
-    employeeId: 'EMP-001',
-  },
-];
+// Row shape as stored in the Supabase `approval_requests` table (credit type).
+interface ApprovalRow {
+  id: string;
+  customer_name: string;
+  request_date: string | null;
+  created_at: string;
+  amount: number | null;
+  risk_score: number | null;
+  risk_category: CreditApplication['riskCategory'] | null;
+  status: CreditApplication['status'];
+  employee_id: string | null;
+}
+
+const mapRow = (row: ApprovalRow): CreditApplication => ({
+  id: row.id,
+  customerName: row.customer_name,
+  applicationDate: (row.request_date ?? row.created_at ?? '').slice(0, 10),
+  loanAmount: row.amount ?? 0,
+  riskScore: row.risk_score ?? 0,
+  riskCategory: row.risk_category ?? 'low',
+  status: row.status,
+  employeeId: row.employee_id ?? '',
+});
 
 const getRiskColor = (category: CreditApplication['riskCategory']) => {
   switch (category) {
@@ -126,6 +107,78 @@ export const CreditRisk: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
+  const [applications, setApplications] = useState<CreditApplication[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchApplications = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('approval_requests')
+      .select('*')
+      .eq('type', 'credit')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Failed to load credit applications:', error);
+      toast.error(
+        language === 'ar'
+          ? `تعذر تحميل الطلبات: ${error.message}`
+          : `Failed to load applications: ${error.message}`
+      );
+      setIsLoading(false);
+      return;
+    }
+
+    setApplications((data as ApprovalRow[]).map(mapRow));
+    setIsLoading(false);
+  }, [language]);
+
+  useEffect(() => {
+    fetchApplications();
+
+    const channel = supabase
+      .channel('credit_applications_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'approval_requests' },
+        () => fetchApplications()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchApplications]);
+
+  const handleDecision = async (
+    app: CreditApplication,
+    decision: 'approved' | 'rejected'
+  ) => {
+    const { error } = await supabase
+      .from('approval_requests')
+      .update({ status: decision, updated_at: new Date().toISOString() })
+      .eq('id', app.id);
+
+    if (error) {
+      console.error('Failed to update application status:', error);
+      toast.error(
+        language === 'ar'
+          ? `فشل تحديث الحالة: ${error.message}`
+          : `Failed to update status: ${error.message}`
+      );
+      return;
+    }
+
+    // Optimistic update; the realtime subscription keeps it in sync too.
+    setApplications(prev =>
+      prev.map(a => (a.id === app.id ? { ...a, status: decision } : a))
+    );
+
+    toast.success(
+      language === 'ar'
+        ? decision === 'approved' ? 'تمت الموافقة على القرض' : 'تم رفض القرض'
+        : decision === 'approved' ? 'Loan approved' : 'Loan rejected'
+    );
+  };
 
   // New assessment form state
   const [formData, setFormData] = useState({
@@ -199,17 +252,10 @@ export const CreditRisk: React.FC = () => {
       loanPurpose: '',
     });
     setIsNewAssessmentOpen(false);
+    fetchApplications();
   };
 
-  const handleRequestApproval = (app: CreditApplication) => {
-    toast.success(
-      language === 'ar'
-        ? 'تم إرسال طلب الموافقة للمدير'
-        : 'Approval request sent to manager'
-    );
-  };
-
-  const filteredApplications = mockApplications.filter(app =>
+  const filteredApplications = applications.filter(app =>
     app.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     app.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -468,6 +514,20 @@ export const CreditRisk: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      {language === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!isLoading && filteredApplications.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      {language === 'ar' ? 'لا توجد طلبات' : 'No applications found'}
+                    </TableCell>
+                  </TableRow>
+                )}
                 {filteredApplications.map((app) => (
                   <TableRow key={app.id}>
                     <TableCell className="font-medium">{app.id}</TableCell>
@@ -504,15 +564,27 @@ export const CreditRisk: React.FC = () => {
                         <Button variant="ghost" size="icon">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {app.status === 'pending' && !hasPermission('manager') && (
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => handleRequestApproval(app)}
-                            title={language === 'ar' ? 'طلب موافقة' : 'Request Approval'}
-                          >
-                            <Send className="h-4 w-4" />
-                          </Button>
+                        {app.status === 'pending' && hasPermission('manager') && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-success hover:text-success"
+                              onClick={() => handleDecision(app, 'approved')}
+                              title={language === 'ar' ? 'موافقة' : 'Approve'}
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDecision(app, 'rejected')}
+                              title={language === 'ar' ? 'رفض' : 'Reject'}
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          </>
                         )}
                         <Button variant="ghost" size="icon">
                           <Info className="h-4 w-4" />
