@@ -1,7 +1,7 @@
 # banking-intelligence-platform
 
 A React + TypeScript banking intelligence dashboard (credit risk, approvals, documents, audit log) built with Vite, Tailwind/shadcn-ui, and Supabase as the backend.
-wowwwww
+
 ## Tech stack
 
 - Vite + React 18 + TypeScript
