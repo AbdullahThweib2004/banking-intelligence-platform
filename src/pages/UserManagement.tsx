@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { ROLES } from '@/lib/roles';
+import { ROLES, type Role } from '@/lib/roles';
+import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -44,118 +45,87 @@ import {
   Plus,
   Search,
   MoreHorizontal,
-  Edit,
   Trash2,
   Shield,
   ShieldCheck,
   ShieldAlert,
-  Mail,
-  Phone,
-  Calendar,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
-interface User {
+type Status = 'active' | 'inactive' | 'suspended';
+
+interface AppUser {
   id: string;
-  email: string;
-  fullName: string;
-  role: 'employee' | 'manager' | 'admin';
-  department: string;
-  status: 'active' | 'inactive' | 'suspended';
-  createdAt: string;
-  lastLogin?: string;
+  email: string | null;
+  fullName: string | null;
+  role: Role;
+  department: string | null;
+  status: Status;
+  createdAt: string | null;
+  lastLogin: string | null;
 }
 
-const mockUsers: User[] = [
-  {
-    id: 'USR-001',
-    email: 'ahmed.m@bankofpalestine.com',
-    fullName: 'أحمد محمد',
-    role: 'employee',
-    department: 'Credit Department',
-    status: 'active',
-    createdAt: '2023-06-15',
-    lastLogin: '2024-01-15 14:30',
-  },
-  {
-    id: 'USR-002',
-    email: 'fatima.k@bankofpalestine.com',
-    fullName: 'فاطمة خالد',
-    role: 'employee',
-    department: 'Document Processing',
-    status: 'active',
-    createdAt: '2023-08-20',
-    lastLogin: '2024-01-15 12:15',
-  },
-  {
-    id: 'USR-003',
-    email: 'khaled.o@bankofpalestine.com',
-    fullName: 'خالد العمري',
-    role: 'manager',
-    department: 'Credit Department',
-    status: 'active',
-    createdAt: '2022-03-10',
-    lastLogin: '2024-01-15 09:00',
-  },
-  {
-    id: 'USR-004',
-    email: 'layla.k@bankofpalestine.com',
-    fullName: 'ليلى كريم',
-    role: 'employee',
-    department: 'Customer Service',
-    status: 'inactive',
-    createdAt: '2023-11-05',
-    lastLogin: '2024-01-10 16:45',
-  },
-  {
-    id: 'USR-005',
-    email: 'saeed.h@bankofpalestine.com',
-    fullName: 'سعيد حسن',
-    role: 'admin',
-    department: 'IT Department',
-    status: 'active',
-    createdAt: '2021-01-20',
-    lastLogin: '2024-01-15 08:00',
-  },
-];
+interface ProfileRow {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: Role;
+  department: string | null;
+  status: Status | null;
+  created_at: string | null;
+}
 
-const getRoleIcon = (role: User['role']) => {
+const mapRow = (row: ProfileRow): AppUser => ({
+  id: row.id,
+  email: row.email,
+  fullName: row.full_name,
+  role: row.role,
+  department: row.department,
+  status: (row.status as Status) ?? 'active',
+  createdAt: row.created_at,
+  lastLogin: null,
+});
+
+const roleLabel = (role: Role, language: string): string => {
   switch (role) {
-    case 'admin': return ShieldAlert;
-    case 'manager': return ShieldCheck;
-    default: return Shield;
+    case ROLES.MANAGER:
+      return language === 'ar' ? 'مدير' : 'Manager';
+    case ROLES.RISK:
+      return language === 'ar' ? 'دائرة المخاطر' : 'Risk';
+    default:
+      return language === 'ar' ? 'موظف' : 'Employee';
   }
 };
 
-const getRoleBadge = (role: User['role'], language: string) => {
+const getRoleBadge = (role: Role, language: string) => {
   switch (role) {
-    case 'admin':
-      return (
-        <Badge className="bg-primary/10 text-primary border-primary/20 gap-1">
-          <ShieldAlert className="h-3 w-3" />
-          {language === 'ar' ? 'مسؤول' : 'Admin'}
-        </Badge>
-      );
-    case 'manager':
+    case ROLES.MANAGER:
       return (
         <Badge className="bg-info/10 text-info border-info/20 gap-1">
           <ShieldCheck className="h-3 w-3" />
-          {language === 'ar' ? 'مدير' : 'Manager'}
+          {roleLabel(role, language)}
+        </Badge>
+      );
+    case ROLES.RISK:
+      return (
+        <Badge className="bg-primary/10 text-primary border-primary/20 gap-1">
+          <ShieldAlert className="h-3 w-3" />
+          {roleLabel(role, language)}
         </Badge>
       );
     default:
       return (
         <Badge variant="outline" className="gap-1">
           <Shield className="h-3 w-3" />
-          {language === 'ar' ? 'موظف' : 'Employee'}
+          {roleLabel(role, language)}
         </Badge>
       );
   }
 };
 
-const getStatusBadge = (status: User['status'], language: string) => {
+const getStatusBadge = (status: Status, language: string) => {
   switch (status) {
     case 'active':
       return <Badge className="bg-success/10 text-success">{language === 'ar' ? 'نشط' : 'Active'}</Badge>;
@@ -166,19 +136,73 @@ const getStatusBadge = (status: User['status'], language: string) => {
   }
 };
 
+/** Extract a human-readable error message from a functions.invoke() failure. */
+async function readInvokeError(error: unknown): Promise<string> {
+  const fallback = (error as Error)?.message ?? 'Request failed';
+  const ctx = (error as { context?: Response })?.context;
+  if (ctx && typeof ctx.json === 'function') {
+    try {
+      const body = await ctx.json();
+      if (body?.error) return String(body.error);
+    } catch {
+      /* ignore */
+    }
+  }
+  return fallback;
+}
+
 export const UserManagement: React.FC = () => {
   const { t, language } = useLanguage();
   const { isRole } = useAuth();
-  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [newUser, setNewUser] = useState({
     email: '',
     fullName: '',
-    role: 'employee' as User['role'],
+    role: ROLES.EMPLOYEE as Role,
     department: '',
   });
+
+  const fetchUsers = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, email, role, department, status, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Failed to load users:', error);
+      toast.error(
+        language === 'ar'
+          ? `تعذر تحميل المستخدمين: ${error.message}`
+          : `Failed to load users: ${error.message}`
+      );
+      setIsLoading(false);
+      return;
+    }
+
+    setUsers((data as ProfileRow[]).map(mapRow));
+    setIsLoading(false);
+  }, [language]);
+
+  useEffect(() => {
+    fetchUsers();
+
+    const channel = supabase
+      .channel('profiles-user-management')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => fetchUsers()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchUsers]);
 
   if (!isRole(ROLES.MANAGER)) {
     return (
@@ -190,9 +214,9 @@ export const UserManagement: React.FC = () => {
               {language === 'ar' ? 'غير مصرح' : 'Access Denied'}
             </h2>
             <p className="text-muted-foreground">
-              {language === 'ar' 
-                ? 'هذه الصفحة متاحة للمسؤولين فقط' 
-                : 'This page is only accessible to administrators'}
+              {language === 'ar'
+                ? 'هذه الصفحة متاحة لمدير الفرع فقط'
+                : 'This page is only accessible to the branch manager'}
             </p>
           </Card>
         </div>
@@ -200,62 +224,116 @@ export const UserManagement: React.FC = () => {
     );
   }
 
-  const handleAddUser = () => {
-    const user: User = {
-      id: `USR-${Date.now()}`,
-      ...newUser,
-      status: 'active',
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-    
-    setUsers(prev => [user, ...prev]);
+  const handleAddUser = async () => {
+    if (!newUser.email.trim() || !newUser.fullName.trim()) {
+      toast.error(
+        language === 'ar'
+          ? 'الاسم والبريد الإلكتروني مطلوبان'
+          : 'Full name and email are required'
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    const { data, error } = await supabase.functions.invoke('admin-users', {
+      body: {
+        action: 'create',
+        email: newUser.email.trim(),
+        full_name: newUser.fullName.trim(),
+        role: newUser.role,
+        department: newUser.department || null,
+      },
+    });
+    setSubmitting(false);
+
+    if (error) {
+      const message = await readInvokeError(error);
+      toast.error(
+        language === 'ar' ? `فشل إنشاء المستخدم: ${message}` : `Failed to create user: ${message}`
+      );
+      return;
+    }
+
     setIsAddDialogOpen(false);
-    setNewUser({ email: '', fullName: '', role: 'employee', department: '' });
-    
+    setNewUser({ email: '', fullName: '', role: ROLES.EMPLOYEE, department: '' });
+    fetchUsers();
+
+    const tempPassword = (data as { tempPassword?: string })?.tempPassword;
     toast.success(
-      language === 'ar' ? 'تم إضافة المستخدم بنجاح' : 'User added successfully'
+      language === 'ar' ? 'تم إنشاء المستخدم بنجاح' : 'User created successfully',
+      tempPassword
+        ? {
+            description:
+              (language === 'ar' ? 'كلمة مرور مؤقتة: ' : 'Temporary password: ') + tempPassword,
+            duration: 15000,
+          }
+        : undefined
     );
   };
 
-  const handleUpdateRole = (userId: string, newRole: User['role']) => {
-    setUsers(prev =>
-      prev.map(user =>
-        user.id === userId ? { ...user, role: newRole } : user
-      )
-    );
-    
+  const handleUpdateRole = async (userId: string, newRole: Role) => {
+    const { error } = await supabase.functions.invoke('admin-users', {
+      body: { action: 'update', id: userId, role: newRole },
+    });
+    if (error) {
+      const message = await readInvokeError(error);
+      toast.error(
+        language === 'ar' ? `فشل تحديث الدور: ${message}` : `Failed to update role: ${message}`
+      );
+      return;
+    }
+    fetchUsers();
     toast.success(
-      language === 'ar' ? 'تم تحديث الدور بنجاح' : 'Role updated successfully'
+      language === 'ar'
+        ? 'تم تحديث الدور (يلزم تسجيل الخروج والدخول لتفعيل الصلاحيات)'
+        : 'Role updated (user must sign out/in for new permissions)'
     );
   };
 
-  const handleDeleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(user => user.id !== userId));
+  const handleToggleStatus = async (user: AppUser) => {
+    const nextStatus: Status = user.status === 'active' ? 'suspended' : 'active';
+    const { error } = await supabase.functions.invoke('admin-users', {
+      body: { action: 'update', id: user.id, status: nextStatus },
+    });
+    if (error) {
+      const message = await readInvokeError(error);
+      toast.error(message);
+      return;
+    }
+    fetchUsers();
     toast.success(
-      language === 'ar' ? 'تم حذف المستخدم' : 'User deleted'
+      language === 'ar' ? 'تم تحديث الحالة' : 'Status updated'
     );
   };
 
-  const handleToggleStatus = (userId: string) => {
-    setUsers(prev =>
-      prev.map(user =>
-        user.id === userId
-          ? { ...user, status: user.status === 'active' ? 'suspended' : 'active' }
-          : user
-      )
-    );
+  const handleDeleteUser = async (userId: string) => {
+    const { error } = await supabase.functions.invoke('admin-users', {
+      body: { action: 'delete', id: userId },
+    });
+    if (error) {
+      const message = await readInvokeError(error);
+      toast.error(
+        language === 'ar' ? `فشل حذف المستخدم: ${message}` : `Failed to delete user: ${message}`
+      );
+      return;
+    }
+    fetchUsers();
+    toast.success(language === 'ar' ? 'تم حذف المستخدم' : 'User deleted');
   };
 
-  const filteredUsers = users.filter(user =>
-    user.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredUsers = users.filter((user) => {
+    const q = searchTerm.toLowerCase();
+    return (
+      (user.fullName ?? '').toLowerCase().includes(q) ||
+      (user.email ?? '').toLowerCase().includes(q)
+    );
+  });
 
   const stats = {
     total: users.length,
-    admins: users.filter(u => u.role === 'admin').length,
-    managers: users.filter(u => u.role === 'manager').length,
-    employees: users.filter(u => u.role === 'employee').length,
+    managers: users.filter((u) => u.role === ROLES.MANAGER).length,
+    risk: users.filter((u) => u.role === ROLES.RISK).length,
+    employees: users.filter((u) => u.role === ROLES.EMPLOYEE).length,
   };
 
   return (
@@ -271,7 +349,7 @@ export const UserManagement: React.FC = () => {
                 : 'Manage user accounts and permissions'}
             </p>
           </div>
-          
+
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gradient-bg gap-2">
@@ -288,49 +366,49 @@ export const UserManagement: React.FC = () => {
                     : 'Enter the new user details'}
                 </DialogDescription>
               </DialogHeader>
-              
+
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'الاسم الكامل' : 'Full Name'}</Label>
                   <Input
                     value={newUser.fullName}
-                    onChange={(e) => setNewUser(prev => ({ ...prev, fullName: e.target.value }))}
+                    onChange={(e) => setNewUser((prev) => ({ ...prev, fullName: e.target.value }))}
                     placeholder={language === 'ar' ? 'أدخل الاسم' : 'Enter name'}
                   />
                 </div>
-                
+
                 <div className="space-y-2">
                   <Label>{t('auth.email')}</Label>
                   <Input
                     type="email"
                     value={newUser.email}
-                    onChange={(e) => setNewUser(prev => ({ ...prev, email: e.target.value }))}
+                    onChange={(e) => setNewUser((prev) => ({ ...prev, email: e.target.value }))}
                     placeholder="name@bankofpalestine.com"
                   />
                 </div>
-                
+
                 <div className="space-y-2">
                   <Label>{t('users.role')}</Label>
                   <Select
                     value={newUser.role}
-                    onValueChange={(v) => setNewUser(prev => ({ ...prev, role: v as User['role'] }))}
+                    onValueChange={(v) => setNewUser((prev) => ({ ...prev, role: v as Role }))}
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="employee">{t('users.employee')}</SelectItem>
-                      <SelectItem value="manager">{t('users.manager')}</SelectItem>
-                      <SelectItem value="admin">{t('users.admin')}</SelectItem>
+                      <SelectItem value={ROLES.EMPLOYEE}>{roleLabel(ROLES.EMPLOYEE, language)}</SelectItem>
+                      <SelectItem value={ROLES.MANAGER}>{roleLabel(ROLES.MANAGER, language)}</SelectItem>
+                      <SelectItem value={ROLES.RISK}>{roleLabel(ROLES.RISK, language)}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                
+
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'القسم' : 'Department'}</Label>
                   <Select
                     value={newUser.department}
-                    onValueChange={(v) => setNewUser(prev => ({ ...prev, department: v }))}
+                    onValueChange={(v) => setNewUser((prev) => ({ ...prev, department: v }))}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder={language === 'ar' ? 'اختر القسم' : 'Select department'} />
@@ -345,19 +423,20 @@ export const UserManagement: React.FC = () => {
                       <SelectItem value="Customer Service">
                         {language === 'ar' ? 'خدمة العملاء' : 'Customer Service'}
                       </SelectItem>
-                      <SelectItem value="IT Department">
-                        {language === 'ar' ? 'قسم تقنية المعلومات' : 'IT Department'}
+                      <SelectItem value="Risk Department">
+                        {language === 'ar' ? 'دائرة المخاطر' : 'Risk Department'}
                       </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)} disabled={submitting}>
                   {t('common.cancel')}
                 </Button>
-                <Button onClick={handleAddUser} className="gradient-bg">
+                <Button onClick={handleAddUser} className="gradient-bg" disabled={submitting}>
+                  {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   {t('users.addUser')}
                 </Button>
               </DialogFooter>
@@ -384,18 +463,7 @@ export const UserManagement: React.FC = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">{t('users.admin')}</p>
-                  <p className="text-2xl font-bold">{stats.admins}</p>
-                </div>
-                <ShieldAlert className="h-8 w-8 text-primary opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{t('users.manager')}</p>
+                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.MANAGER, language)}</p>
                   <p className="text-2xl font-bold">{stats.managers}</p>
                 </div>
                 <ShieldCheck className="h-8 w-8 text-info opacity-50" />
@@ -406,7 +474,18 @@ export const UserManagement: React.FC = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">{t('users.employee')}</p>
+                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.RISK, language)}</p>
+                  <p className="text-2xl font-bold">{stats.risk}</p>
+                </div>
+                <ShieldAlert className="h-8 w-8 text-primary opacity-50" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="stat-card">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.EMPLOYEE, language)}</p>
                   <p className="text-2xl font-bold">{stats.employees}</p>
                 </div>
                 <Shield className="h-8 w-8 text-muted-foreground opacity-50" />
@@ -422,8 +501,8 @@ export const UserManagement: React.FC = () => {
               <div>
                 <CardTitle>{language === 'ar' ? 'المستخدمون' : 'Users'}</CardTitle>
                 <CardDescription>
-                  {language === 'ar' 
-                    ? 'قائمة جميع المستخدمين المسجلين' 
+                  {language === 'ar'
+                    ? 'قائمة جميع المستخدمين المسجلين'
                     : 'List of all registered users'}
                 </CardDescription>
               </div>
@@ -451,27 +530,39 @@ export const UserManagement: React.FC = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      {language === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!isLoading && filteredUsers.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      {language === 'ar' ? 'لا يوجد مستخدمون' : 'No users found'}
+                    </TableCell>
+                  </TableRow>
+                )}
                 {filteredUsers.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
                           <span className="text-primary font-semibold">
-                            {user.fullName.charAt(0)}
+                            {(user.fullName ?? user.email ?? '?').charAt(0).toUpperCase()}
                           </span>
                         </div>
                         <div>
-                          <p className="font-medium">{user.fullName}</p>
-                          <p className="text-sm text-muted-foreground">{user.email}</p>
+                          <p className="font-medium">{user.fullName ?? '—'}</p>
+                          <p className="text-sm text-muted-foreground">{user.email ?? '—'}</p>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{user.department}</TableCell>
+                    <TableCell className="text-muted-foreground">{user.department ?? '—'}</TableCell>
                     <TableCell>{getRoleBadge(user.role, language)}</TableCell>
                     <TableCell>{getStatusBadge(user.status, language)}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {user.lastLogin || '—'}
-                    </TableCell>
+                    <TableCell className="text-muted-foreground">{user.lastLogin ?? '—'}</TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -480,29 +571,29 @@ export const UserManagement: React.FC = () => {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setEditingUser(user)}>
-                            <Edit className="h-4 w-4 mr-2" />
-                            {language === 'ar' ? 'تعديل' : 'Edit'}
+                          <DropdownMenuItem
+                            onClick={() => handleUpdateRole(user.id, ROLES.EMPLOYEE)}
+                            disabled={user.role === ROLES.EMPLOYEE}
+                          >
+                            <Shield className="h-4 w-4 mr-2" />
+                            {language === 'ar' ? 'تعيين كموظف' : 'Set as Employee'}
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Select
-                              value={user.role}
-                              onValueChange={(v) => handleUpdateRole(user.id, v as User['role'])}
-                            >
-                              <SelectTrigger className="border-0 p-0 h-auto">
-                                <div className="flex items-center gap-2">
-                                  <Shield className="h-4 w-4" />
-                                  {language === 'ar' ? 'تغيير الدور' : 'Change Role'}
-                                </div>
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="employee">{t('users.employee')}</SelectItem>
-                                <SelectItem value="manager">{t('users.manager')}</SelectItem>
-                                <SelectItem value="admin">{t('users.admin')}</SelectItem>
-                              </SelectContent>
-                            </Select>
+                          <DropdownMenuItem
+                            onClick={() => handleUpdateRole(user.id, ROLES.MANAGER)}
+                            disabled={user.role === ROLES.MANAGER}
+                          >
+                            <ShieldCheck className="h-4 w-4 mr-2" />
+                            {language === 'ar' ? 'تعيين كمدير' : 'Set as Manager'}
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleToggleStatus(user.id)}>
+                          <DropdownMenuItem
+                            onClick={() => handleUpdateRole(user.id, ROLES.RISK)}
+                            disabled={user.role === ROLES.RISK}
+                          >
+                            <ShieldAlert className="h-4 w-4 mr-2" />
+                            {language === 'ar' ? 'تعيين كدائرة مخاطر' : 'Set as Risk'}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => handleToggleStatus(user)}>
                             {user.status === 'active' ? (
                               <>
                                 <AlertTriangle className="h-4 w-4 mr-2" />
