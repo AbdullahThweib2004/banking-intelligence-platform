@@ -389,7 +389,7 @@ export const Approvals: React.FC = () => {
                     <TableCell>
                       {approval.status === 'pending' ? (
                         <div className="flex gap-1">
-                          {isRole('risk_department') && (
+                          {isRole(ROLES.RISK) && (
                             <>
                               <Button
                                 variant="ghost"

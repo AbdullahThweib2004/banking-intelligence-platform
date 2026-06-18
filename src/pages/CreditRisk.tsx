@@ -571,7 +571,7 @@ export const CreditRisk: React.FC = () => {
                         <Button variant="ghost" size="icon">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {app.status === 'pending' && isRole('risk_department') && (
+                        {app.status === 'pending' && isRole(ROLES.RISK) && (
                           <>
                             <Button
                               variant="ghost"

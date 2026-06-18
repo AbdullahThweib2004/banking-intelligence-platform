@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { ROLES } from '@/lib/roles';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -179,7 +180,7 @@ export const UserManagement: React.FC = () => {
     department: '',
   });
 
-  if (!isRole('branch_manager')) {
+  if (!isRole(ROLES.MANAGER)) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-[calc(100vh-12rem)]">

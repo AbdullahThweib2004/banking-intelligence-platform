@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { ROLES } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -72,9 +73,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
 
   const getRoleLabel = () => {
     switch (role) {
-      case 'branch_manager': return t('users.manager');
-      case 'risk_department': return language === 'ar' ? 'دائرة المخاطر' : 'Risk Department';
-      case 'branch_employee': return t('users.employee');
+      case ROLES.MANAGER: return t('users.manager');
+      case ROLES.RISK: return language === 'ar' ? 'دائرة المخاطر' : 'Risk Department';
+      case ROLES.EMPLOYEE: return t('users.employee');
       default: return t('users.employee');
     }
   };
