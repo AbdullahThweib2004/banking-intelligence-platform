@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,7 +104,7 @@ const getStatusColor = (status: CreditApplication['status']) => {
 
 export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
-  const { isRole, user } = useAuth();
+  const { isRole, role, user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
@@ -111,11 +112,17 @@ export const CreditRisk: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchApplications = useCallback(async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('approval_requests')
       .select('*')
-      .eq('type', 'credit')
-      .order('created_at', { ascending: false });
+      .eq('type', 'credit');
+
+    // Employees only see their own submissions; managers and risk see everything.
+    if (role === ROLES.EMPLOYEE) {
+      query = query.eq('employee_id', user?.id ?? '');
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('Failed to load credit applications:', error);
@@ -130,7 +137,7 @@ export const CreditRisk: React.FC = () => {
 
     setApplications((data as ApprovalRow[]).map(mapRow));
     setIsLoading(false);
-  }, [language]);
+  }, [language, role, user]);
 
   useEffect(() => {
     fetchApplications();

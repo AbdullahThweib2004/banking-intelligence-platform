@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -107,7 +108,7 @@ const getPriorityBadge = (priority: ApprovalRequest['priority'], language: strin
 
 export const Approvals: React.FC = () => {
   const { t, language } = useLanguage();
-  const { isRole } = useAuth();
+  const { isRole, role, user } = useAuth();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedApproval, setSelectedApproval] = useState<ApprovalRequest | null>(null);
@@ -117,10 +118,14 @@ export const Approvals: React.FC = () => {
   const [activeTab, setActiveTab] = useState('pending');
 
   const fetchApprovals = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('approval_requests')
-      .select('*')
-      .order('created_at', { ascending: false });
+    let query = supabase.from('approval_requests').select('*');
+
+    // Employees only see their own submissions; managers and risk see everything.
+    if (role === ROLES.EMPLOYEE) {
+      query = query.eq('employee_id', user?.id ?? '');
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('Failed to load approval requests:', error);
@@ -143,7 +148,7 @@ export const Approvals: React.FC = () => {
 
     setApprovals((data as ApprovalRow[]).map((row) => mapRow(row, employeeNameById)));
     setIsLoading(false);
-  }, [language]);
+  }, [language, role, user]);
 
   useEffect(() => {
     fetchApprovals();
