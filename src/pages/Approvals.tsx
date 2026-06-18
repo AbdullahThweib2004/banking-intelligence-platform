@@ -3,6 +3,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
+import { useApprovalStats } from '@/hooks/useStats';
+import { StatValue } from '@/components/StatValue';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -109,6 +111,7 @@ const getPriorityBadge = (priority: ApprovalRequest['priority'], language: strin
 export const Approvals: React.FC = () => {
   const { t, language } = useLanguage();
   const { isRole, role, user } = useAuth();
+  const { stats, loading: statsLoading, error: statsError } = useApprovalStats();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedApproval, setSelectedApproval] = useState<ApprovalRequest | null>(null);
@@ -185,10 +188,15 @@ export const Approvals: React.FC = () => {
     }
 
     const newStatus = actionType === 'approve' ? 'approved' : 'rejected';
+    const now = new Date().toISOString();
 
     const { error } = await supabase
       .from('approval_requests')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .update({
+        status: newStatus,
+        updated_at: now,
+        approved_at: newStatus === 'approved' ? now : null,
+      })
       .eq('id', selectedApproval.id);
 
     if (error) {
@@ -246,7 +254,9 @@ export const Approvals: React.FC = () => {
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
                   </p>
-                  <p className="text-2xl font-bold">{pendingApprovals.length}</p>
+                  <p className="text-2xl font-bold">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.pending.toLocaleString()} />
+                  </p>
                 </div>
                 <Clock className="h-8 w-8 text-warning opacity-50" />
               </div>
@@ -260,7 +270,7 @@ export const Approvals: React.FC = () => {
                     {language === 'ar' ? 'عاجل' : 'Urgent'}
                   </p>
                   <p className="text-2xl font-bold text-destructive">
-                    {pendingApprovals.filter(a => a.priority === 'urgent').length}
+                    <StatValue loading={statsLoading} error={statsError} value={stats.urgent.toLocaleString()} />
                   </p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-destructive opacity-50" />
@@ -274,7 +284,9 @@ export const Approvals: React.FC = () => {
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
                   </p>
-                  <p className="text-2xl font-bold text-success">12</p>
+                  <p className="text-2xl font-bold text-success">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.approvedToday.toLocaleString()} />
+                  </p>
                 </div>
                 <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
               </div>
@@ -287,7 +299,13 @@ export const Approvals: React.FC = () => {
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
                   </p>
-                  <p className="text-2xl font-bold">2.5h</p>
+                  <p className="text-2xl font-bold">
+                    <StatValue
+                      loading={statsLoading}
+                      error={statsError}
+                      value={`${stats.avgProcessTimeHours}h`}
+                    />
+                  </p>
                 </div>
                 <TrendingUp className="h-8 w-8 text-primary opacity-50" />
               </div>

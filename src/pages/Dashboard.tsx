@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Link } from 'react-router-dom';
+import { useDashboardStats } from '@/hooks/useStats';
+import { StatValue } from '@/components/StatValue';
 
 interface StatCardProps {
   title: string;
@@ -27,9 +29,11 @@ interface StatCardProps {
   change?: number;
   icon: React.ElementType;
   description?: string;
+  loading?: boolean;
+  error?: unknown;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon: Icon, description }) => {
+const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon: Icon, description, loading, error }) => {
   const isPositive = change && change > 0;
   const isNegative = change && change < 0;
   
@@ -39,7 +43,9 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon: Icon, d
         <div className="flex items-start justify-between">
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold text-foreground">{value}</p>
+            <p className="text-3xl font-bold text-foreground">
+              <StatValue loading={!!loading} error={error} value={value} skeletonClassName="h-8 w-24" />
+            </p>
             {change !== undefined && (
               <div className="flex items-center gap-1">
                 {isPositive && <ArrowUpRight className="h-4 w-4 text-success" />}
@@ -134,6 +140,7 @@ const getStatusBadge = (status: ActivityItem['status'], language: string) => {
 export const Dashboard: React.FC = () => {
   const { t, language } = useLanguage();
   const { canAccess } = useAuth();
+  const { stats, loading, error } = useDashboardStats();
 
   return (
     <DashboardLayout>
@@ -152,29 +159,31 @@ export const Dashboard: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title={t('dashboard.totalApplications')}
-            value="1,284"
-            change={12}
+            value={stats.totalApplications.toLocaleString()}
             icon={FileText}
-            description={language === 'ar' ? 'هذا الشهر' : 'this month'}
+            loading={loading}
+            error={error}
           />
           <StatCard
             title={t('dashboard.pendingReview')}
-            value="23"
-            change={-5}
+            value={stats.pendingReview.toLocaleString()}
             icon={Clock}
-            description={language === 'ar' ? 'من الأمس' : 'from yesterday'}
+            loading={loading}
+            error={error}
           />
           <StatCard
             title={t('dashboard.approvedToday')}
-            value="47"
-            change={8}
+            value={stats.approvedToday.toLocaleString()}
             icon={CheckCircle2}
-            description={language === 'ar' ? 'اليوم' : 'today'}
+            loading={loading}
+            error={error}
           />
           <StatCard
             title={t('dashboard.riskScore')}
-            value="34.2"
+            value={stats.avgRiskScore}
             icon={TrendingUp}
+            loading={loading}
+            error={error}
           />
         </div>
 

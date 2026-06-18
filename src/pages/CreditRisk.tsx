@@ -3,6 +3,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
+import { useCreditRiskStats } from '@/hooks/useStats';
+import { StatValue } from '@/components/StatValue';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -105,6 +107,7 @@ const getStatusColor = (status: CreditApplication['status']) => {
 export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
   const { isRole, role, user } = useAuth();
+  const { stats, loading: statsLoading, error: statsError } = useCreditRiskStats();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
@@ -160,9 +163,14 @@ export const CreditRisk: React.FC = () => {
     app: CreditApplication,
     decision: 'approved' | 'rejected'
   ) => {
+    const now = new Date().toISOString();
     const { error } = await supabase
       .from('approval_requests')
-      .update({ status: decision, updated_at: new Date().toISOString() })
+      .update({
+        status: decision,
+        updated_at: now,
+        approved_at: decision === 'approved' ? now : null,
+      })
       .eq('id', app.id);
 
     if (error) {
@@ -438,7 +446,9 @@ export const CreditRisk: React.FC = () => {
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar' ? 'إجمالي التقييمات' : 'Total Assessments'}
                   </p>
-                  <p className="text-2xl font-bold">1,284</p>
+                  <p className="text-2xl font-bold">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.totalAssessments.toLocaleString()} />
+                  </p>
                 </div>
                 <TrendingUp className="h-8 w-8 text-primary opacity-50" />
               </div>
@@ -449,7 +459,9 @@ export const CreditRisk: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{t('credit.lowRisk')}</p>
-                  <p className="text-2xl font-bold text-success">847</p>
+                  <p className="text-2xl font-bold text-success">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.lowRisk.toLocaleString()} />
+                  </p>
                 </div>
                 <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
               </div>
@@ -460,7 +472,9 @@ export const CreditRisk: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{t('credit.mediumRisk')}</p>
-                  <p className="text-2xl font-bold text-warning">312</p>
+                  <p className="text-2xl font-bold text-warning">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.mediumRisk.toLocaleString()} />
+                  </p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-warning opacity-50" />
               </div>
@@ -471,7 +485,9 @@ export const CreditRisk: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{t('credit.highRisk')}</p>
-                  <p className="text-2xl font-bold text-destructive">125</p>
+                  <p className="text-2xl font-bold text-destructive">
+                    <StatValue loading={statsLoading} error={statsError} value={stats.highRisk.toLocaleString()} />
+                  </p>
                 </div>
                 <TrendingDown className="h-8 w-8 text-destructive opacity-50" />
               </div>
