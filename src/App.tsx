@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { ROLES } from "@/lib/roles";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import CreditRisk from "./pages/CreditRisk";
@@ -13,12 +15,14 @@ import AIAssistant from "./pages/AIAssistant";
 import Approvals from "./pages/Approvals";
 import AuditLog from "./pages/AuditLog";
 import UserManagement from "./pages/UserManagement";
+import Unauthorized from "./pages/Unauthorized";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-// Protected Route wrapper
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+// Auth-only guard. (Renamed from the former local `ProtectedRoute` to avoid a
+// name clash with the role-based ProtectedRoute imported above.)
+const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
@@ -70,59 +74,71 @@ const AppRoutes = () => {
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute>
+          <RequireAuth>
             <Dashboard />
-          </ProtectedRoute>
+          </RequireAuth>
         }
       />
       <Route
         path="/credit-risk"
         element={
-          <ProtectedRoute>
+          <RequireAuth>
             <CreditRisk />
-          </ProtectedRoute>
+          </RequireAuth>
         }
       />
       <Route
         path="/documents"
         element={
-          <ProtectedRoute>
+          <RequireAuth>
             <Documents />
-          </ProtectedRoute>
+          </RequireAuth>
         }
       />
       <Route
         path="/ai-assistant"
         element={
-          <ProtectedRoute>
+          <RequireAuth>
             <AIAssistant />
-          </ProtectedRoute>
+          </RequireAuth>
         }
       />
       <Route
         path="/approvals"
         element={
-          <ProtectedRoute>
+          <RequireAuth>
             <Approvals />
-          </ProtectedRoute>
+          </RequireAuth>
         }
       />
+
+      {/* Risk Department only */}
       <Route
         path="/audit-log"
         element={
-          <ProtectedRoute>
-            <AuditLog />
-          </ProtectedRoute>
+          <RequireAuth>
+            <ProtectedRoute allowedRoles={[ROLES.RISK]}>
+              <AuditLog />
+            </ProtectedRoute>
+          </RequireAuth>
         }
       />
+
+      {/* Branch Manager only */}
       <Route
-        path="/users"
+        path="/user-management"
         element={
-          <ProtectedRoute>
-            <UserManagement />
-          </ProtectedRoute>
+          <RequireAuth>
+            <ProtectedRoute allowedRoles={[ROLES.MANAGER]}>
+              <UserManagement />
+            </ProtectedRoute>
+          </RequireAuth>
         }
       />
+
+      {/* Publicly accessible — must NOT be guarded to avoid a redirect loop */}
+      <Route path="/unauthorized" element={<Unauthorized />} />
+
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

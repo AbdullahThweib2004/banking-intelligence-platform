@@ -103,7 +103,7 @@ const getStatusColor = (status: CreditApplication['status']) => {
 
 export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
-  const { role, hasPermission, user } = useAuth();
+  const { isRole, user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
@@ -564,7 +564,7 @@ export const CreditRisk: React.FC = () => {
                         <Button variant="ghost" size="icon">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {app.status === 'pending' && hasPermission('manager') && (
+                        {app.status === 'pending' && isRole('risk_department') && (
                           <>
                             <Button
                               variant="ghost"

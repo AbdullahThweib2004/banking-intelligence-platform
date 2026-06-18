@@ -37,22 +37,23 @@ interface NavItem {
   icon: React.ElementType;
   labelKey: string;
   path: string;
-  roles: ('employee' | 'manager' | 'admin')[];
 }
 
+// Visibility is driven entirely by ROUTE_PERMISSIONS in src/lib/roles.ts (via
+// canAccess), so future permission changes only need to happen in that one file.
 const navItems: NavItem[] = [
-  { icon: LayoutDashboard, labelKey: 'nav.dashboard', path: '/dashboard', roles: ['employee', 'manager', 'admin'] },
-  { icon: TrendingUp, labelKey: 'nav.creditRisk', path: '/credit-risk', roles: ['employee', 'manager', 'admin'] },
-  { icon: FileText, labelKey: 'nav.documents', path: '/documents', roles: ['employee', 'manager', 'admin'] },
-  { icon: Bot, labelKey: 'nav.aiAssistant', path: '/ai-assistant', roles: ['employee', 'manager', 'admin'] },
-  { icon: CheckSquare, labelKey: 'nav.approvals', path: '/approvals', roles: ['manager', 'admin'] },
-  { icon: ClipboardList, labelKey: 'nav.auditLog', path: '/audit-log', roles: ['manager', 'admin'] },
-  { icon: Users, labelKey: 'nav.users', path: '/users', roles: ['admin'] },
+  { icon: LayoutDashboard, labelKey: 'nav.dashboard', path: '/dashboard' },
+  { icon: TrendingUp, labelKey: 'nav.creditRisk', path: '/credit-risk' },
+  { icon: FileText, labelKey: 'nav.documents', path: '/documents' },
+  { icon: Bot, labelKey: 'nav.aiAssistant', path: '/ai-assistant' },
+  { icon: CheckSquare, labelKey: 'nav.approvals', path: '/approvals' },
+  { icon: ClipboardList, labelKey: 'nav.auditLog', path: '/audit-log' },
+  { icon: Users, labelKey: 'nav.users', path: '/user-management' },
 ];
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const { t, language, setLanguage, direction } = useLanguage();
-  const { user, role, signOut, hasPermission } = useAuth();
+  const { user, role, signOut, canAccess } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -67,14 +68,13 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     setLanguage(language === 'en' ? 'ar' : 'en');
   };
 
-  const filteredNavItems = navItems.filter(item => 
-    hasPermission(item.roles as any)
-  );
+  const filteredNavItems = navItems.filter(item => canAccess(item.path));
 
   const getRoleLabel = () => {
     switch (role) {
-      case 'admin': return t('users.admin');
-      case 'manager': return t('users.manager');
+      case 'branch_manager': return t('users.manager');
+      case 'risk_department': return language === 'ar' ? 'دائرة المخاطر' : 'Risk Department';
+      case 'branch_employee': return t('users.employee');
       default: return t('users.employee');
     }
   };

@@ -196,12 +196,12 @@ const getRoleBadge = (role: AuditEntry['userRole'], language: string) => {
 
 export const AuditLog: React.FC = () => {
   const { t, language } = useLanguage();
-  const { hasPermission } = useAuth();
+  const { isRole } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAction, setFilterAction] = useState('all');
   const [filterRole, setFilterRole] = useState('all');
 
-  if (!hasPermission('manager')) {
+  if (!isRole('risk_department')) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-[calc(100vh-12rem)]">

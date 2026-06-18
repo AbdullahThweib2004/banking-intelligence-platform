@@ -167,7 +167,7 @@ const getStatusBadge = (status: User['status'], language: string) => {
 
 export const UserManagement: React.FC = () => {
   const { t, language } = useLanguage();
-  const { hasPermission } = useAuth();
+  const { isRole } = useAuth();
   const [users, setUsers] = useState<User[]>(mockUsers);
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -179,7 +179,7 @@ export const UserManagement: React.FC = () => {
     department: '',
   });
 
-  if (!hasPermission('admin')) {
+  if (!isRole('branch_manager')) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-[calc(100vh-12rem)]">

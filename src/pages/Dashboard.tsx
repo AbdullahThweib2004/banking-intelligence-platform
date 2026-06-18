@@ -133,7 +133,7 @@ const getStatusBadge = (status: ActivityItem['status'], language: string) => {
 
 export const Dashboard: React.FC = () => {
   const { t, language } = useLanguage();
-  const { role, hasPermission } = useAuth();
+  const { canAccess } = useAuth();
 
   return (
     <DashboardLayout>
@@ -216,7 +216,7 @@ export const Dashboard: React.FC = () => {
                 </Button>
               </Link>
               
-              {hasPermission('manager') && (
+              {canAccess('/approvals') && (
                 <Link to="/approvals">
                   <Button variant="outline" className="w-full justify-start gap-3 h-12">
                     <div className="p-2 rounded-lg bg-warning/10">

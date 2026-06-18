@@ -107,7 +107,7 @@ const getPriorityBadge = (priority: ApprovalRequest['priority'], language: strin
 
 export const Approvals: React.FC = () => {
   const { t, language } = useLanguage();
-  const { hasPermission } = useAuth();
+  const { isRole } = useAuth();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedApproval, setSelectedApproval] = useState<ApprovalRequest | null>(null);
@@ -163,26 +163,6 @@ export const Approvals: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [fetchApprovals]);
-
-  if (!hasPermission('manager')) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-[calc(100vh-12rem)]">
-          <Card className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-warning mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">
-              {language === 'ar' ? 'غير مصرح' : 'Access Denied'}
-            </h2>
-            <p className="text-muted-foreground">
-              {language === 'ar' 
-                ? 'هذه الصفحة متاحة للمديرين فقط' 
-                : 'This page is only accessible to managers'}
-            </p>
-          </Card>
-        </div>
-      </DashboardLayout>
-    );
-  }
 
   const handleAction = (approval: ApprovalRequest, action: 'approve' | 'reject' | 'view') => {
     setSelectedApproval(approval);
@@ -404,22 +384,26 @@ export const Approvals: React.FC = () => {
                     <TableCell>
                       {approval.status === 'pending' ? (
                         <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-success hover:text-success"
-                            onClick={() => handleAction(approval, 'approve')}
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => handleAction(approval, 'reject')}
-                          >
-                            <XCircle className="h-4 w-4" />
-                          </Button>
+                          {isRole('risk_department') && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-success hover:text-success"
+                                onClick={() => handleAction(approval, 'approve')}
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleAction(approval, 'reject')}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
