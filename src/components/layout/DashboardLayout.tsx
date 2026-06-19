@@ -18,6 +18,7 @@ import {
   Bot,
   CheckSquare,
   ClipboardList,
+  FileEdit,
   Users,
   Settings,
   LogOut,
@@ -48,6 +49,7 @@ const navItems: NavItem[] = [
   { icon: FileText, labelKey: 'nav.documents', path: '/documents' },
   { icon: Bot, labelKey: 'nav.aiAssistant', path: '/ai-assistant' },
   { icon: CheckSquare, labelKey: 'nav.approvals', path: '/approvals' },
+  { icon: FileEdit, labelKey: 'nav.modificationRequests', path: '/modification-requests' },
   { icon: ClipboardList, labelKey: 'nav.auditLog', path: '/audit-log' },
   { icon: Users, labelKey: 'nav.users', path: '/user-management' },
 ];

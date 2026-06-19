@@ -14,6 +14,7 @@ import Documents from "./pages/Documents";
 import AIAssistant from "./pages/AIAssistant";
 import Approvals from "./pages/Approvals";
 import AuditLog from "./pages/AuditLog";
+import ModificationRequests from "./pages/ModificationRequests";
 import UserManagement from "./pages/UserManagement";
 import Unauthorized from "./pages/Unauthorized";
 import NotFound from "./pages/NotFound";
@@ -119,6 +120,16 @@ const AppRoutes = () => {
           <RequireAuth>
             <ProtectedRoute allowedRoles={[ROLES.RISK]}>
               <AuditLog />
+            </ProtectedRoute>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/modification-requests"
+        element={
+          <RequireAuth>
+            <ProtectedRoute allowedRoles={[ROLES.RISK]}>
+              <ModificationRequests />
             </ProtectedRoute>
           </RequireAuth>
         }

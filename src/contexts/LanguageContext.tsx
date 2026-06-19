@@ -18,6 +18,7 @@ const translations: Translations = {
   'nav.aiAssistant': { en: 'AI Assistant', ar: 'المساعد الذكي' },
   'nav.approvals': { en: 'Approvals', ar: 'الموافقات' },
   'nav.auditLog': { en: 'Audit Log', ar: 'سجل المراجعة' },
+  'nav.modificationRequests': { en: 'Modification Requests', ar: 'طلبات التعديل' },
   'nav.users': { en: 'User Management', ar: 'إدارة المستخدمين' },
   'nav.settings': { en: 'Settings', ar: 'الإعدادات' },
   'nav.logout': { en: 'Logout', ar: 'تسجيل الخروج' },

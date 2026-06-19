@@ -15,6 +15,7 @@ export const ROUTE_PERMISSIONS: Record<string, Role[]> = {
   '/approvals':       ['branch_employee', 'branch_manager', 'risk_department'],
   '/user-management': ['branch_manager'],
   '/audit-log':       ['risk_department'],
+  '/modification-requests': ['risk_department'],
 };
 
 export function canAccess(role: Role | null, path: string): boolean {
