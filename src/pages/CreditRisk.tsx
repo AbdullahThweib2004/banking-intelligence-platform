@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -48,6 +49,8 @@ import {
   Download,
   Eye,
   Info,
+  Pencil,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -104,15 +107,46 @@ const getStatusColor = (status: CreditApplication['status']) => {
   }
 };
 
+// Fields an employee is allowed to object to / request modification of.
+// Built as a superset of approval_requests + credit_applications columns; only
+// the ones actually present on the loaded record are offered in the dropdown.
+const EDITABLE_FIELDS: { key: string; en: string; ar: string }[] = [
+  { key: 'customer_name', en: 'Customer Name', ar: 'اسم العميل' },
+  { key: 'national_id', en: 'National ID', ar: 'رقم الهوية' },
+  { key: 'monthly_income', en: 'Monthly Income', ar: 'الدخل الشهري' },
+  { key: 'monthly_expenses', en: 'Monthly Expenses', ar: 'المصاريف الشهرية' },
+  { key: 'existing_loans', en: 'Existing Loans', ar: 'القروض الحالية' },
+  { key: 'employment_type', en: 'Employment Type', ar: 'نوع التوظيف' },
+  { key: 'loan_amount', en: 'Loan Amount', ar: 'مبلغ القرض' },
+  { key: 'loan_purpose', en: 'Loan Purpose', ar: 'الغرض من القرض' },
+  { key: 'amount', en: 'Loan Amount', ar: 'مبلغ القرض' },
+  { key: 'notes', en: 'Notes', ar: 'ملاحظات' },
+];
+
+interface LoadedApplication {
+  table: 'approval_requests' | 'credit_applications';
+  row: Record<string, unknown>;
+}
+
 export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
-  const { isRole, role, user } = useAuth();
+  const { isRole, role, user, profile } = useAuth();
   const { stats, loading: statsLoading, error: statsError } = useCreditRiskStats();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
   const [applications, setApplications] = useState<CreditApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // --- Objection / Modification feature state ---
+  const [isObjectionOpen, setIsObjectionOpen] = useState(false);
+  const [objAppId, setObjAppId] = useState('');
+  const [objLoading, setObjLoading] = useState(false);
+  const [objSubmitting, setObjSubmitting] = useState(false);
+  const [objRecord, setObjRecord] = useState<LoadedApplication | null>(null);
+  const [objFieldName, setObjFieldName] = useState('');
+  const [objNewValue, setObjNewValue] = useState('');
+  const [objReason, setObjReason] = useState('');
 
   const fetchApplications = useCallback(async () => {
     let query = supabase
@@ -270,6 +304,137 @@ export const CreditRisk: React.FC = () => {
     fetchApplications();
   };
 
+  // Best-effort audit log entry (employees can insert their own; ignore failures).
+  const writeAuditLog = async (
+    action: string,
+    resource: string,
+    resourceId: string,
+    details: string
+  ) => {
+    if (!user?.id) return;
+    const { error } = await supabase.from('audit_logs').insert({
+      user_id: user.id,
+      user_name: profile?.full_name ?? null,
+      user_role: role ?? null,
+      action,
+      resource,
+      resource_id: resourceId,
+      details,
+      severity: 'info',
+    });
+    if (error) console.warn('Audit log insert skipped:', error.message);
+  };
+
+  const resetObjection = () => {
+    setObjAppId('');
+    setObjRecord(null);
+    setObjFieldName('');
+    setObjNewValue('');
+    setObjReason('');
+  };
+
+  const loadApplicationForObjection = async () => {
+    const id = objAppId.trim();
+    if (!id) {
+      toast.error(language === 'ar' ? 'أدخل رقم الطلب' : 'Enter an Application ID');
+      return;
+    }
+
+    setObjLoading(true);
+    setObjRecord(null);
+    setObjFieldName('');
+    setObjNewValue('');
+
+    // Try the table the app actually uses first, then fall back.
+    let table: LoadedApplication['table'] = 'approval_requests';
+    let row: Record<string, unknown> | null = null;
+
+    const primary = await supabase.from('approval_requests').select('*').eq('id', id).maybeSingle();
+    if (primary.data) {
+      row = primary.data as Record<string, unknown>;
+    } else {
+      const secondary = await supabase.from('credit_applications').select('*').eq('id', id).maybeSingle();
+      if (secondary.data) {
+        row = secondary.data as Record<string, unknown>;
+        table = 'credit_applications';
+      }
+    }
+
+    setObjLoading(false);
+
+    if (!row) {
+      toast.error(language === 'ar' ? 'الطلب غير موجود' : 'Application not found');
+      return;
+    }
+
+    setObjRecord({ table, row });
+    writeAuditLog(
+      'Loaded application for modification',
+      table,
+      String(row.id),
+      `Loaded application ${row.id} for objection/modification`
+    );
+  };
+
+  const availableEditFields = objRecord
+    ? EDITABLE_FIELDS.filter((f) => f.key in objRecord.row)
+    : [];
+
+  const handleSelectEditField = (key: string) => {
+    setObjFieldName(key);
+    const current = objRecord?.row[key];
+    setObjNewValue(current == null ? '' : String(current));
+  };
+
+  const submitObjection = async () => {
+    if (!objRecord) {
+      toast.error(language === 'ar' ? 'حمّل الطلب أولاً' : 'Load an application first');
+      return;
+    }
+    if (!objFieldName) {
+      toast.error(language === 'ar' ? 'اختر حقلاً للتعديل' : 'Select a field to edit');
+      return;
+    }
+    if (!objReason.trim()) {
+      toast.error(language === 'ar' ? 'سبب التعديل مطلوب' : 'Reason for modification is required');
+      return;
+    }
+
+    setObjSubmitting(true);
+    const oldValue = objRecord.row[objFieldName];
+    const { error } = await supabase.from('loan_modification_requests').insert({
+      application_id: objRecord.row.id,
+      requested_by: user?.id ?? null,
+      requester_name: profile?.full_name ?? null,
+      requester_role: role ?? null,
+      field_name: objFieldName,
+      old_value: oldValue == null ? null : String(oldValue),
+      new_value: objNewValue,
+      reason: objReason.trim(),
+      status: 'pending',
+    });
+    setObjSubmitting(false);
+
+    if (error) {
+      console.error('Failed to submit modification request:', error);
+      toast.error(
+        language === 'ar'
+          ? `فشل إرسال الطلب: ${error.message}`
+          : `Failed to submit request: ${error.message}`
+      );
+      return;
+    }
+
+    // Submission is also audit-logged automatically by the DB trigger.
+    toast.success(
+      language === 'ar'
+        ? 'تم إرسال طلب التعديل بنجاح'
+        : 'Modification request submitted successfully'
+    );
+    resetObjection();
+    setIsObjectionOpen(false);
+  };
+
   const filteredApplications = applications.filter(app =>
     app.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     app.id.toLowerCase().includes(searchTerm.toLowerCase())
@@ -288,7 +453,8 @@ export const CreditRisk: React.FC = () => {
                 : 'AI-powered credit risk assessment and scoring'}
             </p>
           </div>
-          
+
+          <div className="flex flex-wrap gap-3">
           <Dialog open={isNewAssessmentOpen} onOpenChange={setIsNewAssessmentOpen}>
             <DialogTrigger asChild>
               <Button className="gradient-bg gap-2">
@@ -435,6 +601,141 @@ export const CreditRisk: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog
+            open={isObjectionOpen}
+            onOpenChange={(open) => {
+              setIsObjectionOpen(open);
+              if (!open) resetObjection();
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <Pencil className="h-4 w-4" />
+                {language === 'ar' ? 'اعتراض / تعديل' : 'Objection / Modification'}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>
+                  {language === 'ar' ? 'طلب اعتراض / تعديل' : 'Objection / Modification Request'}
+                </DialogTitle>
+                <DialogDescription>
+                  {language === 'ar'
+                    ? 'حمّل طلباً موجوداً واطلب تعديل حقل واحد مع ذكر السبب'
+                    : 'Load an existing application and request a change to a single field with a reason'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 py-4">
+                {/* Step 1: load application */}
+                <div className="space-y-2">
+                  <Label>{language === 'ar' ? 'رقم الطلب' : 'Application ID'}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={objAppId}
+                      onChange={(e) => setObjAppId(e.target.value)}
+                      placeholder={language === 'ar' ? 'أدخل رقم الطلب (UUID)' : 'Enter Application ID (UUID)'}
+                    />
+                    <Button
+                      variant="secondary"
+                      onClick={loadApplicationForObjection}
+                      disabled={objLoading}
+                    >
+                      {objLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      {language === 'ar' ? 'تحميل الطلب' : 'Load Application'}
+                    </Button>
+                  </div>
+                </div>
+
+                {objRecord && (
+                  <>
+                    {/* Step 3: read-only fields + choose field to edit */}
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'الحقل المراد تعديله' : 'Field to Edit'}</Label>
+                      <Select value={objFieldName} onValueChange={handleSelectEditField}>
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={language === 'ar' ? 'اختر حقلاً' : 'Select a field'}
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableEditFields.map((f) => (
+                            <SelectItem key={f.key} value={f.key}>
+                              {language === 'ar' ? f.ar : f.en}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      {availableEditFields.map((f) => {
+                        const isEditing = objFieldName === f.key;
+                        const raw = objRecord.row[f.key];
+                        return (
+                          <div className="space-y-2" key={f.key}>
+                            <Label className={isEditing ? 'text-primary' : ''}>
+                              {language === 'ar' ? f.ar : f.en}
+                              {isEditing && (
+                                <span className="ml-1 text-xs">
+                                  {language === 'ar' ? '(قابل للتعديل)' : '(editable)'}
+                                </span>
+                              )}
+                            </Label>
+                            <Input
+                              value={isEditing ? objNewValue : raw == null ? '' : String(raw)}
+                              onChange={(e) => setObjNewValue(e.target.value)}
+                              readOnly={!isEditing}
+                              disabled={!isEditing}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Step 4: reason */}
+                    <div className="space-y-2">
+                      <Label>
+                        {language === 'ar' ? 'سبب التعديل / الاعتراض' : 'Reason for modification / objection'}
+                        <span className="text-destructive"> *</span>
+                      </Label>
+                      <Textarea
+                        value={objReason}
+                        onChange={(e) => setObjReason(e.target.value)}
+                        placeholder={
+                          language === 'ar' ? 'اشرح سبب التعديل المطلوب' : 'Explain why this change is needed'
+                        }
+                        rows={3}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-3 justify-end pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      resetObjection();
+                      setIsObjectionOpen(false);
+                    }}
+                    disabled={objSubmitting}
+                  >
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    onClick={submitObjection}
+                    className="gradient-bg"
+                    disabled={!objRecord || objSubmitting}
+                  >
+                    {objSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {language === 'ar' ? 'إرسال الطلب' : 'Submit Request'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+          </div>
         </div>
 
         {/* Stats */}
