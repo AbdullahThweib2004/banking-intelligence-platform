@@ -17,34 +17,30 @@ import {
   RefreshCw,
   BookOpen,
   HelpCircle,
-  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { answerQuestion, getAllChunks, type Citation } from '@/lib/rag';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
-  sources?: string[];
-  confidence?: number;
+  sources?: Citation[];
 }
 
-const suggestedQuestions = {
-  en: [
-    'What are the loan eligibility requirements?',
-    'How do I process a mortgage application?',
-    'What documents are required for business loans?',
-    'Explain the credit risk assessment process',
-  ],
-  ar: [
-    'ما هي متطلبات أهلية القرض؟',
-    'كيف أقوم بمعالجة طلب رهن عقاري؟',
-    'ما المستندات المطلوبة للقروض التجارية؟',
-    'اشرح عملية تقييم مخاطر الائتمان',
-  ],
-};
+// A mixed English/Arabic set so users can try both languages directly.
+const suggestedQuestions = [
+  'What documents are required for a bank loan?',
+  'ما هي المستندات المطلوبة للتقديم على قرض؟',
+  'What is the minimum deposit for a savings account?',
+  'ما هو الحد الأدنى للإيداع لفتح حساب توفير؟',
+  'When should a complaint be escalated?',
+  'متى يجب تصعيد شكوى العميل؟',
+];
+
+const isArabicText = (text: string) => /[\u0600-\u06FF]/.test(text);
 
 export const AIAssistant: React.FC = () => {
   const { t, language } = useLanguage();
@@ -53,6 +49,10 @@ export const AIAssistant: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const allChunks = getAllChunks();
+  const indexedSectionsCount = allChunks.length;
+  const indexedDocsCount = new Set(allChunks.map((c) => c.fileName)).size;
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -70,63 +70,28 @@ export const AIAssistant: React.FC = () => {
       timestamp: new Date(),
     };
 
+    const query = input;
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
-    // Simulate AI response (replace with actual API call to OpenRouter)
-    setTimeout(() => {
-      const responses = {
-        en: {
-          default: `Based on our banking policies and procedures, I can help you with that query. 
-
-Here's what I found:
-
-**Key Points:**
-1. All loan applications must include proper identification documents
-2. Income verification is required for amounts above ₪50,000
-3. The standard processing time is 3-5 business days
-
-**Related Policies:**
-- Credit Policy Manual, Section 4.2
-- Risk Assessment Guidelines, Chapter 7
-
-Would you like me to provide more specific information about any of these points?`,
-          sources: ['Credit Policy Manual v3.2', 'Risk Assessment Guidelines 2024', 'Internal Procedures Handbook'],
-        },
-        ar: {
-          default: `بناءً على سياسات وإجراءات البنك، يمكنني مساعدتك في هذا الاستفسار.
-
-إليك ما وجدته:
-
-**النقاط الرئيسية:**
-1. يجب أن تتضمن جميع طلبات القروض وثائق تعريف صحيحة
-2. مطلوب التحقق من الدخل للمبالغ التي تزيد عن ₪50,000
-3. وقت المعالجة القياسي هو 3-5 أيام عمل
-
-**السياسات ذات الصلة:**
-- دليل سياسة الائتمان، القسم 4.2
-- إرشادات تقييم المخاطر، الفصل 7
-
-هل تريد مني تقديم معلومات أكثر تحديدًا حول أي من هذه النقاط؟`,
-          sources: ['دليل سياسة الائتمان 3.2', 'إرشادات تقييم المخاطر 2024', 'دليل الإجراءات الداخلية'],
-        },
-      };
-
-      const response = language === 'ar' ? responses.ar : responses.en;
+    // Retrieve from the policy knowledge base (Supabase pgvector, with a local
+    // keyword fallback). The answer is composed only from retrieved chunks.
+    try {
+      const result = await answerQuestion(query);
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: response.default,
+        content: result.answer,
         timestamp: new Date(),
-        sources: response.sources,
-        confidence: 94,
+        sources: result.citations,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   const handleQuestionClick = (question: string) => {
@@ -147,7 +112,7 @@ Would you like me to provide more specific information about any of these points
     toast.success(language === 'ar' ? 'تم النسخ!' : 'Copied!');
   };
 
-  const questions = language === 'ar' ? suggestedQuestions.ar : suggestedQuestions.en;
+  const questions = suggestedQuestions;
 
   return (
     <DashboardLayout>
@@ -192,7 +157,9 @@ Would you like me to provide more specific information about any of these points
                           onClick={() => handleQuestionClick(question)}
                         >
                           <HelpCircle className="h-4 w-4 mr-2 flex-shrink-0 text-primary" />
-                          <span className="line-clamp-2">{question}</span>
+                          <span className="line-clamp-2" dir={isArabicText(question) ? 'rtl' : 'ltr'}>
+                            {question}
+                          </span>
                         </Button>
                       ))}
                     </div>
@@ -228,35 +195,45 @@ Would you like me to provide more specific information about any of these points
                               ? "bg-primary text-primary-foreground rounded-tr-md"
                               : "bg-muted rounded-tl-md"
                           )}>
-                            <p className="whitespace-pre-wrap">{message.content}</p>
+                            <p
+                              className={cn(
+                                "whitespace-pre-wrap",
+                                isArabicText(message.content) ? "text-right" : "text-left"
+                              )}
+                              dir={isArabicText(message.content) ? 'rtl' : 'ltr'}
+                            >
+                              {message.content}
+                            </p>
                           </div>
                           
                           {message.role === 'assistant' && (
                             <div className="mt-2 space-y-2">
                               {/* Sources */}
-                              {message.sources && (
-                                <div className="flex flex-wrap gap-2">
-                                  <BookOpen className="h-4 w-4 text-muted-foreground" />
-                                  {message.sources.map((source, index) => (
-                                    <Badge 
-                                      key={index} 
-                                      variant="outline" 
-                                      className="text-xs"
-                                    >
-                                      {source}
-                                    </Badge>
-                                  ))}
+                              {message.sources && message.sources.length > 0 && (
+                                <div className="rounded-lg border border-border/60 bg-background/50 p-3">
+                                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
+                                    <BookOpen className="h-3.5 w-3.5" />
+                                    {language === 'ar' ? 'المصادر' : 'Sources'}
+                                  </div>
+                                  <div className="space-y-1">
+                                    {message.sources.map((source, index) => (
+                                      <div key={index} className="flex items-center gap-1.5 text-xs">
+                                        <span className="font-mono text-foreground">{source.fileName}</span>
+                                        <span className="text-muted-foreground">→</span>
+                                        <span
+                                          className="text-muted-foreground"
+                                          dir={isArabicText(source.sectionTitle) ? 'rtl' : 'ltr'}
+                                        >
+                                          {source.sectionTitle}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
-                              
-                              {/* Confidence & Actions */}
+
+                              {/* Actions */}
                               <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                                {message.confidence && (
-                                  <span className="flex items-center gap-1">
-                                    <Sparkles className="h-3 w-3" />
-                                    {language === 'ar' ? 'الثقة:' : 'Confidence:'} {message.confidence}%
-                                  </span>
-                                )}
                                 <div className="flex gap-1">
                                   <Button
                                     variant="ghost"
@@ -357,7 +334,9 @@ Would you like me to provide more specific information about any of these points
                     onClick={() => handleQuestionClick(question)}
                   >
                     <HelpCircle className="h-4 w-4 mr-2 flex-shrink-0 text-muted-foreground" />
-                    <span className="line-clamp-2">{question}</span>
+                    <span className="line-clamp-2" dir={isArabicText(question) ? 'rtl' : 'ltr'}>
+                      {question}
+                    </span>
                   </Button>
                 ))}
               </CardContent>
@@ -372,21 +351,23 @@ Would you like me to provide more specific information about any of these points
               <CardContent className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
-                    {language === 'ar' ? 'النموذج' : 'Model'}
+                    {language === 'ar' ? 'الوضع' : 'Mode'}
                   </span>
-                  <Badge variant="outline">GPT-4</Badge>
+                  <Badge variant="outline">
+                    {language === 'ar' ? 'قاعدة معرفة السياسات' : 'Policy Knowledge Base'}
+                  </Badge>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
                     {language === 'ar' ? 'المستندات المفهرسة' : 'Indexed Docs'}
                   </span>
-                  <span className="font-medium">247</span>
+                  <span className="font-medium">{indexedDocsCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
-                    {language === 'ar' ? 'آخر تحديث' : 'Last Updated'}
+                    {language === 'ar' ? 'الأقسام' : 'Sections'}
                   </span>
-                  <span className="font-medium">2024-01-15</span>
+                  <span className="font-medium">{indexedSectionsCount}</span>
                 </div>
               </CardContent>
             </Card>
