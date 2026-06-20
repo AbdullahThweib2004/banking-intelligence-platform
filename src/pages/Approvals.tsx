@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
 
 interface ApprovalRequest {
   id: string;
@@ -453,6 +454,15 @@ export const Approvals: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Modification requests — visible to manager (view) and risk (view + review) */}
+        {(isRole(ROLES.MANAGER) || isRole(ROLES.RISK)) && (
+          <ModificationRequestsPanel
+            embedded
+            enabled
+            canReview={isRole(ROLES.RISK)}
+          />
+        )}
 
         {/* Action Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

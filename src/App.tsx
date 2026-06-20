@@ -128,7 +128,7 @@ const AppRoutes = () => {
         path="/modification-requests"
         element={
           <RequireAuth>
-            <ProtectedRoute allowedRoles={[ROLES.RISK]}>
+            <ProtectedRoute allowedRoles={[ROLES.RISK, ROLES.MANAGER]}>
               <ModificationRequests />
             </ProtectedRoute>
           </RequireAuth>
