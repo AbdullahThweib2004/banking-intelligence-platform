@@ -10,13 +10,17 @@
 //   * answer language matches the query language
 //   * the answer is composed ONLY from retrieved chunk content
 //   * citations are localized: file name → section title (same language)
-//   * if nothing relevant is found, the same-language fallback is returned
+//   * if nothing relevant is found, the same-language refusal is returned
+//
+// Assistant policy (out-of-scope refusal, no hallucination) lives in
+// src/lib/assistantPolicy.ts.
 //
 // The local markdown files are still imported so (a) the keyword fallback works
 // and (b) they remain the single source ingested into Supabase.
 // ============================================================================
 
 import { supabase } from '@/integrations/supabase/client';
+import { isOutOfScope, REFUSAL_MESSAGE } from '@/lib/assistantPolicy';
 import loanPolicy from '@/data/policies/loan-policy.md?raw';
 import accountOpeningPolicy from '@/data/policies/account-opening-policy.md?raw';
 import customerServiceGuidelines from '@/data/policies/customer-service-guidelines.md?raw';
@@ -44,10 +48,20 @@ export interface RagResult {
   chunks: PolicyChunk[];
 }
 
-export const NOT_FOUND_MESSAGE: Record<Lang, string> = {
-  en: 'I could not find this information in the available policy documents.',
-  ar: 'لم أتمكن من العثور على هذه المعلومة في ملفات السياسات المتاحة.',
-};
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  /** True when the assistant reply was grounded in policy sources. */
+  hadSources?: boolean;
+}
+
+export interface AnswerOptions {
+  topK?: number;
+  history?: ChatTurn[];
+}
+
+/** @deprecated Use REFUSAL_MESSAGE from assistantPolicy */
+export const NOT_FOUND_MESSAGE = REFUSAL_MESSAGE;
 
 const ARABIC_CHAR = /[\u0600-\u06FF]/;
 
@@ -264,6 +278,86 @@ export function retrieveLocal(query: string, topK = 3, lang?: Lang): PolicyChunk
     .map((s) => s.chunk);
 }
 
+interface ScoredPolicyChunk extends PolicyChunk {
+  similarity?: number;
+}
+
+/** Minimum cosine similarity to treat a remote match as confident enough. */
+const REMOTE_SIMILARITY_MIN = 0.32;
+
+/**
+ * Expand short follow-up questions with the previous banking topic so retrieval
+ * stays on the same internal document context (rule 8).
+ */
+function expandQueryWithContext(query: string, history: ChatTurn[] | undefined): string {
+  if (!history?.length) return query;
+
+  const prior = history.filter(
+    (t) => t.role === 'assistant' && t.hadSources
+  );
+  if (prior.length === 0) return query;
+
+  const lastBankingUser = [...history]
+    .reverse()
+    .find((t) => t.role === 'user' && t.content.trim() !== query.trim());
+  if (!lastBankingUser) return query;
+
+  const wordCount = query.trim().split(/\s+/).length;
+  const looksLikeFollowUp =
+    wordCount <= 10 ||
+    /^(what about|how about|and |also |tell me more|more on|regarding|about the|ماذا عن|وماذا|وكيف|أيضا|بخصوص)/i.test(
+      query.trim()
+    );
+
+  if (!looksLikeFollowUp) return query;
+
+  return `${lastBankingUser.content.trim()}. ${query.trim()}`;
+}
+
+/** Build a concise answer from chunk text — bullets first, then relevant lines. */
+function conciseBody(body: string, query: string, language: Lang, maxBullets = 6): string {
+  const lines = body
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const bullets = lines.filter((l) => /^[-*•]\s/.test(l) || /^\d+[.)]\s/.test(l));
+  const queryTerms = new Set(tokenize(query));
+
+  const scoreLine = (line: string): number => {
+    const terms = tokenize(line.replace(/^[-*•\d.)]+\s*/, ''));
+    let s = 0;
+    for (const t of terms) if (queryTerms.has(t)) s += 1;
+    return s;
+  };
+
+  const pick = (candidates: string[]): string[] => {
+    if (candidates.length === 0) return [];
+    const ranked = [...candidates].sort((a, b) => scoreLine(b) - scoreLine(a));
+    const top = ranked.filter((l) => scoreLine(l) > 0);
+    const pool = top.length > 0 ? top : ranked;
+    return pool.slice(0, maxBullets).map((l) => l.replace(/^[-*•]\s*/, '• '));
+  };
+
+  if (bullets.length > 0) {
+    const picked = pick(bullets);
+    if (picked.length > 0) return picked.join('\n');
+  }
+
+  const sentences = body
+    .replace(/\n+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 20);
+
+  const pickedSentences = pick(sentences);
+  if (pickedSentences.length > 0) return pickedSentences.join('\n');
+
+  // Last resort: first portion of the section (still from the document only).
+  const fallback = body.slice(0, language === 'ar' ? 480 : 520).trim();
+  return fallback + (body.length > fallback.length ? '…' : '');
+}
+
 interface PolicyMatchRow {
   file_name: string;
   section_title_en: string;
@@ -278,36 +372,54 @@ interface PolicyMatchRow {
  * Throws if the Edge Function / vector store is unavailable so the caller can
  * fall back. A successful call returning zero rows means "no relevant match".
  */
-export async function retrieveRemote(query: string, topK = 4): Promise<PolicyChunk[]> {
+export async function retrieveRemote(
+  query: string,
+  topK = 4
+): Promise<ScoredPolicyChunk[]> {
   const { data, error } = await supabase.functions.invoke('policy-search', {
-    body: { query, matchCount: topK, matchThreshold: 0.3 },
+    body: { query, matchCount: topK, matchThreshold: REMOTE_SIMILARITY_MIN },
   });
 
   if (error) throw error;
   const rows = (data?.chunks ?? []) as PolicyMatchRow[];
 
-  return rows.map((r) => ({
-    fileName: r.file_name,
-    sectionTitleEn: r.section_title_en,
-    sectionTitleAr: r.section_title_ar,
-    textEn: r.content_en,
-    textAr: r.content_ar,
-  }));
+  return rows
+    .filter((r) => r.similarity >= REMOTE_SIMILARITY_MIN)
+    .map((r) => ({
+      fileName: r.file_name,
+      sectionTitleEn: r.section_title_en,
+      sectionTitleAr: r.section_title_ar,
+      textEn: r.content_en,
+      textAr: r.content_ar,
+      similarity: r.similarity,
+    }));
 }
 
-function compose(chunks: PolicyChunk[], language: Lang): RagResult {
+function refuse(language: Lang): RagResult {
+  return {
+    found: false,
+    answer: REFUSAL_MESSAGE[language],
+    language,
+    citations: [],
+    chunks: [],
+  };
+}
+
+function compose(
+  chunks: PolicyChunk[],
+  language: Lang,
+  query: string
+): RagResult {
   if (chunks.length === 0) {
-    return {
-      found: false,
-      answer: NOT_FOUND_MESSAGE[language],
-      language,
-      citations: [],
-      chunks: [],
-    };
+    return refuse(language);
   }
 
   const answer = chunks
-    .map((c) => `**${titleForLang(c, language)}**\n${bodyForLang(c, language)}`)
+    .map((c) => {
+      const title = titleForLang(c, language);
+      const body = conciseBody(bodyForLang(c, language), query, language);
+      return `**${title}**\n${body}`;
+    })
     .join('\n\n---\n\n');
 
   const citations: Citation[] = chunks.map((c) => ({
@@ -325,18 +437,29 @@ function compose(chunks: PolicyChunk[], language: Lang): RagResult {
  * only from retrieved chunk text — no outside knowledge — and always carries
  * localized citations.
  */
-export async function answerQuestion(query: string, topK = 3): Promise<RagResult> {
+export async function answerQuestion(
+  query: string,
+  options: AnswerOptions = {}
+): Promise<RagResult> {
+  const topK = options.topK ?? 3;
   const language = detectLanguage(query);
+
+  // Rule 2–4: refuse clearly out-of-scope questions without retrieval.
+  if (isOutOfScope(query, language)) {
+    return refuse(language);
+  }
+
+  const searchQuery = expandQueryWithContext(query, options.history);
 
   // Primary: Supabase + pgvector semantic search.
   try {
-    const remoteChunks = await retrieveRemote(query, Math.max(topK, 4));
-    return compose(remoteChunks.slice(0, topK), language);
+    const remoteChunks = await retrieveRemote(searchQuery, Math.max(topK, 4));
+    return compose(remoteChunks.slice(0, topK), language, query);
   } catch (err) {
     // Vector store unavailable — fall back to the local keyword engine.
     console.warn('[rag] semantic retrieval unavailable, using local fallback:', err);
-    const localChunks = retrieveLocal(query, topK, language);
-    return compose(localChunks, language);
+    const localChunks = retrieveLocal(searchQuery, topK, language);
+    return compose(localChunks, language, query);
   }
 }
 

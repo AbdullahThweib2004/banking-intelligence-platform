@@ -78,14 +78,20 @@ export const AIAssistant: React.FC = () => {
     // Retrieve from the policy knowledge base (Supabase pgvector, with a local
     // keyword fallback). The answer is composed only from retrieved chunks.
     try {
-      const result = await answerQuestion(query);
+      const result = await answerQuestion(query, {
+        history: messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          hadSources: Boolean(m.sources?.length),
+        })),
+      });
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: result.answer,
         timestamp: new Date(),
-        sources: result.citations,
+        sources: result.found ? result.citations : undefined,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -122,8 +128,8 @@ export const AIAssistant: React.FC = () => {
           <h1 className="text-3xl font-bold text-foreground">{t('ai.title')}</h1>
           <p className="text-muted-foreground mt-1">
             {language === 'ar'
-              ? 'استفسر عن السياسات والإجراءات المصرفية'
-              : 'Ask about banking policies and procedures'}
+              ? 'اسأل عن سياسات البنك والإجراءات والمنتجات والإرشادات الداخلية فقط'
+              : 'Ask about bank policies, procedures, products, and internal guidelines only'}
           </p>
         </div>
 
@@ -144,7 +150,7 @@ export const AIAssistant: React.FC = () => {
                     <p className="text-muted-foreground max-w-md mb-6">
                       {language === 'ar'
                         ? 'أنا مساعدك الذكي للإجابة على أسئلتك حول السياسات والإجراءات المصرفية'
-                        : "I'm your AI assistant for answering questions about banking policies and procedures"}
+                        : "I answer from the bank's internal knowledge base — policies, procedures, and guidelines only"}
                     </p>
                     
                     {/* Suggested Questions */}
@@ -310,8 +316,8 @@ export const AIAssistant: React.FC = () => {
                 </div>
                 <p className="text-xs text-muted-foreground mt-2 text-center">
                   {language === 'ar'
-                    ? 'قد تحتوي الإجابات على أخطاء. تحقق دائماً من المعلومات المهمة.'
-                    : 'Responses may contain errors. Always verify important information.'}
+                    ? 'يجيب المساعد من قاعدة المعرفة المصرفية الداخلية فقط. تحقق دائماً من المعلومات المهمة.'
+                    : 'Answers come from the internal bank knowledge base only. Always verify important information.'}
                 </p>
               </div>
             </CardContent>
