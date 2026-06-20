@@ -9,8 +9,8 @@
 // Required environment variables (e.g. in .env, run with --env-file=.env):
 //   SUPABASE_URL                  (or VITE_SUPABASE_URL)
 //   SUPABASE_SERVICE_ROLE_KEY     (service role key — never commit this)
-//   OPENAI_API_KEY                (for embeddings)
-//   EMBEDDING_MODEL               (optional, default: text-embedding-3-small)
+//   OPENROUTER_API_KEY            (for embeddings — never commit this)
+//   EMBEDDING_MODEL               (optional, default: openai/text-embedding-3-small)
 //
 // Run:
 //   node --env-file=.env scripts/ingest-policies.mjs
@@ -30,10 +30,12 @@ const FILES = [
   "customer-service-guidelines.md",
 ];
 
+// Using OpenRouter OpenAI-compatible embeddings endpoint.
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "text-embedding-3-small";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "openai/text-embedding-3-small";
 
 function fail(msg) {
   console.error(`\n✖ ${msg}\n`);
@@ -42,7 +44,7 @@ function fail(msg) {
 
 if (!SUPABASE_URL) fail("Missing SUPABASE_URL (or VITE_SUPABASE_URL).");
 if (!SERVICE_ROLE) fail("Missing SUPABASE_SERVICE_ROLE_KEY.");
-if (!OPENAI_API_KEY) fail("Missing OPENAI_API_KEY.");
+if (!OPENROUTER_API_KEY) fail("Missing OPENROUTER_API_KEY.");
 
 const ARABIC_CHAR = /[\u0600-\u06FF]/;
 
@@ -94,11 +96,13 @@ function parseFile(fileName, content) {
 }
 
 async function embed(text) {
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
+  const res = await fetch(`${OPENROUTER_BASE_URL}/embeddings`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:8080",
+      "X-Title": "Palestine Intel Hub",
     },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
   });

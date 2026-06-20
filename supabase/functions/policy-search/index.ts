@@ -15,13 +15,16 @@
 // Response:             { chunks: PolicyMatch[] }
 //
 // Deploy:   supabase functions deploy policy-search
-// Secrets:  supabase secrets set OPENAI_API_KEY=sk-...
+// Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
 //           (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are injected by Supabase)
 // ---------------------------------------------------------------------------
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ?? "text-embedding-3-small";
+// Using OpenRouter OpenAI-compatible embeddings endpoint.
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const EMBEDDING_MODEL =
+  Deno.env.get("EMBEDDING_MODEL") ?? "openai/text-embedding-3-small";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,14 +41,16 @@ function json(status: number, body: unknown) {
 }
 
 async function embed(text: string): Promise<number[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
 
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
+  const res = await fetch(`${OPENROUTER_BASE_URL}/embeddings`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:8080",
+      "X-Title": "Palestine Intel Hub",
     },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: text }),
   });

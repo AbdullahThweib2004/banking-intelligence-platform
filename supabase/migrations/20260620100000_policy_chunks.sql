@@ -5,7 +5,7 @@
 -- and a single multilingual embedding used for semantic retrieval. Retrieval is
 -- done via match_policy_chunks() (cosine similarity).
 --
--- Embedding model: OpenAI text-embedding-3-small -> 1536 dimensions.
+-- Embedding model: openai/text-embedding-3-small via OpenRouter -> 1536 dims.
 -- If you switch to a model with different dimensions, update vector(1536) here
 -- and re-run ingestion.
 -- ============================================================================
