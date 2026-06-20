@@ -128,6 +128,30 @@ interface LoadedApplication {
   row: Record<string, unknown>;
 }
 
+interface BankCustomerRow {
+  id: string;
+  account_number: string;
+  customer_name: string;
+  national_id: string;
+  monthly_income: number;
+  monthly_expenses: number;
+  existing_loans: number;
+  employment_type: string;
+  loan_amount: number;
+  loan_purpose: string;
+}
+
+const EMPTY_ASSESSMENT_FORM = {
+  customerName: '',
+  nationalId: '',
+  monthlyIncome: '',
+  monthlyExpenses: '',
+  existingLoans: '',
+  employmentType: '',
+  loanAmount: '',
+  loanPurpose: '',
+};
+
 export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
   const { isRole, role, user, profile } = useAuth();
@@ -230,22 +254,93 @@ export const CreditRisk: React.FC = () => {
   };
 
   // New assessment form state
-  const [formData, setFormData] = useState({
-    customerName: '',
-    nationalId: '',
-    monthlyIncome: '',
-    monthlyExpenses: '',
-    existingLoans: '',
-    employmentType: '',
-    loanAmount: '',
-    loanPurpose: '',
-  });
+  const [accountNumber, setAccountNumber] = useState('');
+  const [customerLoaded, setCustomerLoaded] = useState(false);
+  const [loadCustomerLoading, setLoadCustomerLoading] = useState(false);
+  const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
+
+  const resetAssessmentForm = () => {
+    setAccountNumber('');
+    setCustomerLoaded(false);
+    setLoadCustomerLoading(false);
+    setFormData({ ...EMPTY_ASSESSMENT_FORM });
+  };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const loadCustomerByAccount = async () => {
+    const acct = accountNumber.trim();
+    if (!acct) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى إدخال رقم الحساب'
+          : 'Please enter an account number'
+      );
+      return;
+    }
+
+    setLoadCustomerLoading(true);
+    setCustomerLoaded(false);
+
+    const { data, error } = await supabase
+      .from('bank_customers')
+      .select('*')
+      .eq('account_number', acct)
+      .maybeSingle();
+
+    setLoadCustomerLoading(false);
+
+    if (error) {
+      console.error('Failed to load customer:', error);
+      toast.error(
+        language === 'ar'
+          ? `تعذر تحميل بيانات العميل: ${error.message}`
+          : `Failed to load customer: ${error.message}`
+      );
+      return;
+    }
+
+    if (!data) {
+      setFormData({ ...EMPTY_ASSESSMENT_FORM });
+      toast.error(
+        language === 'ar'
+          ? 'الحساب غير موجود. يرجى التحقق من رقم الحساب.'
+          : 'Account not found. Please verify the account number.'
+      );
+      return;
+    }
+
+    const row = data as BankCustomerRow;
+    setFormData({
+      customerName: row.customer_name,
+      nationalId: row.national_id,
+      monthlyIncome: String(row.monthly_income),
+      monthlyExpenses: String(row.monthly_expenses),
+      existingLoans: String(row.existing_loans),
+      employmentType: row.employment_type,
+      loanAmount: String(row.loan_amount),
+      loanPurpose: row.loan_purpose,
+    });
+    setCustomerLoaded(true);
+    toast.success(
+      language === 'ar'
+        ? `تم تحميل بيانات ${row.customer_name}`
+        : `Loaded customer: ${row.customer_name}`
+    );
+  };
+
   const handleSubmitAssessment = async () => {
+    if (!customerLoaded) {
+      toast.error(
+        language === 'ar'
+          ? 'حمّل بيانات العميل برقم الحساب أولاً'
+          : 'Load the customer by account number first'
+      );
+      return;
+    }
+
     if (!formData.customerName.trim() || !formData.loanAmount) {
       toast.error(
         language === 'ar'
@@ -255,15 +350,26 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
-    // Simulate ML risk score calculation
-    const simulatedScore = Math.floor(Math.random() * 100);
+    // Simulate ML risk score calculation (uses loaded financial profile).
+    const income = Number(formData.monthlyIncome) || 0;
+    const expenses = Number(formData.monthlyExpenses) || 0;
+    const existing = Number(formData.existingLoans) || 0;
+    const debtRatio = income > 0 ? (expenses + existing / 12) / income : 1;
+    const baseScore = Math.min(100, Math.max(0, Math.round(debtRatio * 60 + Math.random() * 25)));
+    const simulatedScore = baseScore;
     const riskCategory =
       simulatedScore < 40 ? 'low' : simulatedScore < 70 ? 'medium' : 'high';
 
-    // Persist as a pending approval request so it appears on the Approvals page.
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
+      account_number: accountNumber.trim(),
       customer_name: formData.customerName.trim(),
+      national_id: formData.nationalId.trim() || null,
+      monthly_income: income || null,
+      monthly_expenses: expenses || null,
+      existing_loans: existing || null,
+      employment_type: formData.employmentType || null,
+      loan_purpose: formData.loanPurpose || null,
       amount: Number(formData.loanAmount),
       risk_score: simulatedScore,
       risk_category: riskCategory,
@@ -271,8 +377,8 @@ export const CreditRisk: React.FC = () => {
       status: 'pending',
       employee_id: user?.id ?? null,
       notes: formData.loanPurpose
-        ? `Loan purpose: ${formData.loanPurpose}`
-        : null,
+        ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose}`
+        : `Account: ${accountNumber.trim()}`,
     });
 
     if (error) {
@@ -290,16 +396,7 @@ export const CreditRisk: React.FC = () => {
         ? `تم حساب درجة المخاطر: ${simulatedScore} وإرسال الطلب للموافقة`
         : `Risk score calculated: ${simulatedScore} — sent for approval`
     );
-    setFormData({
-      customerName: '',
-      nationalId: '',
-      monthlyIncome: '',
-      monthlyExpenses: '',
-      existingLoans: '',
-      employmentType: '',
-      loanAmount: '',
-      loanPurpose: '',
-    });
+    resetAssessmentForm();
     setIsNewAssessmentOpen(false);
     fetchApplications();
   };
@@ -455,7 +552,13 @@ export const CreditRisk: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap gap-3">
-          <Dialog open={isNewAssessmentOpen} onOpenChange={setIsNewAssessmentOpen}>
+          <Dialog
+            open={isNewAssessmentOpen}
+            onOpenChange={(open) => {
+              setIsNewAssessmentOpen(open);
+              if (!open) resetAssessmentForm();
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="gradient-bg gap-2">
                 <Plus className="h-4 w-4" />
@@ -467,12 +570,48 @@ export const CreditRisk: React.FC = () => {
                 <DialogTitle>{t('credit.newAssessment')}</DialogTitle>
                 <DialogDescription>
                   {language === 'ar'
-                    ? 'أدخل بيانات العميل لتقييم مخاطر الائتمان'
-                    : 'Enter customer data for credit risk assessment'}
+                    ? 'أدخل رقم الحساب لتحميل بيانات العميل تلقائياً'
+                    : 'Enter the account number to load customer data automatically'}
                 </DialogDescription>
               </DialogHeader>
               
               <div className="space-y-6 py-4">
+                {/* Account lookup */}
+                <div className="space-y-2">
+                  <Label>{language === 'ar' ? 'رقم الحساب' : 'Account Number'}</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={accountNumber}
+                      onChange={(e) => {
+                        setAccountNumber(e.target.value);
+                        setCustomerLoaded(false);
+                      }}
+                      placeholder={language === 'ar' ? 'مثال: BOP-100001' : 'e.g. BOP-100001'}
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={loadCustomerByAccount}
+                      disabled={loadCustomerLoading}
+                    >
+                      {loadCustomerLoading && (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      )}
+                      {language === 'ar' ? 'تحميل العميل' : 'Load Customer'}
+                    </Button>
+                  </div>
+                  {customerLoaded && (
+                    <p className="text-xs text-success flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {language === 'ar'
+                        ? 'تم تحميل بيانات العميل — يمكنك تعديل الحقول قبل التقييم'
+                        : 'Customer loaded — you may edit fields before assessing'}
+                    </p>
+                  )}
+                </div>
+
+                {customerLoaded && (
+                <>
                 <div className="space-y-4">
                   <h3 className="font-semibold">{t('credit.customerInfo')}</h3>
                   <div className="grid grid-cols-2 gap-4">
@@ -598,6 +737,16 @@ export const CreditRisk: React.FC = () => {
                     {language === 'ar' ? 'تقييم المخاطر' : 'Assess Risk'}
                   </Button>
                 </div>
+                </>
+                )}
+
+                {!customerLoaded && (
+                  <p className="text-sm text-muted-foreground text-center py-6">
+                    {language === 'ar'
+                      ? 'أدخل رقم الحساب واضغط «تحميل العميل» لعرض النموذج'
+                      : 'Enter an account number and click Load Customer to show the form'}
+                  </p>
+                )}
               </div>
             </DialogContent>
           </Dialog>
