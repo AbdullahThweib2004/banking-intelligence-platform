@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useAIChat } from '@/contexts/AIChatContext';
+import { SuggestedQuestions } from '@/components/SuggestedQuestions';
 
 const isArabicText = (text: string) => /[\u0600-\u06FF]/.test(text);
 
@@ -150,6 +151,11 @@ export const AIAssistant: React.FC = () => {
   const handleSend = async () => {
     if (!input.trim() || isLoading || conversationLoading) return;
     await sendMessage(input);
+  };
+
+  const handleSuggestedQuestion = async (question: string) => {
+    if (isLoading || conversationLoading) return;
+    await sendMessage(question);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -276,18 +282,22 @@ export const AIAssistant: React.FC = () => {
                     {language === 'ar' ? 'جارٍ تحميل المحادثة...' : 'Loading conversation...'}
                   </div>
                 ) : messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center py-16">
+                  <div className="flex flex-col items-center justify-center h-full text-center py-10 px-4">
                     <div className="p-4 rounded-full bg-primary/10 mb-4">
                       <Bot className="h-12 w-12 text-primary" />
                     </div>
                     <h3 className="text-xl font-semibold mb-2">
                       {language === 'ar' ? 'مرحباً! كيف يمكنني مساعدتك؟' : 'Hello! How can I help you?'}
                     </h3>
-                    <p className="text-muted-foreground max-w-md">
+                    <p className="text-muted-foreground max-w-md text-sm">
                       {language === 'ar'
-                        ? 'اسأل عن سياسات البنك والإجراءات الداخلية. ستظهر محادثاتك السابقة في السجل.'
-                        : 'Ask about bank policies and procedures. Your past chats appear in History.'}
+                        ? 'اختر سؤالاً مقترحاً أو اكتب سؤالك أدناه.'
+                        : 'Pick a suggested question or type your own below.'}
                     </p>
+                    <SuggestedQuestions
+                      onSelect={(q) => void handleSuggestedQuestion(q)}
+                      disabled={isLoading || conversationLoading}
+                    />
                   </div>
                 ) : (
                   <div className="space-y-4">

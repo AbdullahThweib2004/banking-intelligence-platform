@@ -11,9 +11,22 @@ import React, {
 import { useAuth } from '@/contexts/AuthContext';
 import { answerQuestion } from '@/lib/rag';
 import type { Citation } from '@/lib/rag';
-import { supabase } from '@/integrations/supabase/client';
+import {
+  MAX_HISTORY_CHATS,
+  createConversation as dbCreateConversation,
+  fetchConversationHistory,
+  getAuthenticatedUserId,
+  loadConversationMessages,
+  persistMessage as dbPersistMessage,
+  pruneOldConversations as dbPruneOldConversations,
+  userFacingSaveError,
+  type ConversationSummary,
+  type DbErrorInfo,
+} from '@/lib/chatHistoryDb';
 import { toast } from 'sonner';
 import { generateId } from '@/lib/utils';
+
+export type { ConversationSummary };
 
 export interface ChatMessage {
   id: string;
@@ -23,33 +36,13 @@ export interface ChatMessage {
   sources?: Citation[];
 }
 
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  updated_at: string;
-}
-
-interface MessageRow {
+function mapMessageRow(row: {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   sources: Citation[] | null;
   created_at: string;
-}
-
-interface ConversationRow {
-  id: string;
-  title: string;
-  updated_at: string;
-}
-
-function truncateTitle(text: string, max = 56): string {
-  const t = text.trim().replace(/\s+/g, ' ');
-  if (t.length <= max) return t;
-  return `${t.slice(0, max - 1)}…`;
-}
-
-function mapMessageRow(row: MessageRow): ChatMessage {
+}): ChatMessage {
   return {
     id: row.id,
     role: row.role,
@@ -57,20 +50,6 @@ function mapMessageRow(row: MessageRow): ChatMessage {
     timestamp: new Date(row.created_at),
     sources: row.sources ?? undefined,
   };
-}
-
-function isMissingHistoryTable(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const e = error as Record<string, unknown>;
-  const code = String(e.code ?? '');
-  const message = String(e.message ?? e.details ?? '');
-  const status = Number(e.status ?? e.statusCode ?? 0);
-
-  if (status === 404) return true;
-  if (code === '42P01' || code === 'PGRST205' || code === 'PGRST204') return true;
-  return /ai_chat_conversations|ai_chat_messages|does not exist|Could not find the table|schema cache/i.test(
-    message
-  );
 }
 
 interface AIChatContextType {
@@ -90,6 +69,8 @@ interface AIChatContextType {
 
 const AIChatContext = createContext<AIChatContextType | undefined>(undefined);
 
+export { MAX_HISTORY_CHATS };
+
 export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -101,122 +82,82 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
-  const [historyUnavailable, setHistoryUnavailable] = useState(false);
 
   const activeConversationIdRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
-  const historyUnavailableRef = useRef(false);
+  const missingTableWarnedRef = useRef(false);
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
   }, [activeConversationId]);
 
   useEffect(() => {
-    historyUnavailableRef.current = historyUnavailable;
-  }, [historyUnavailable]);
-
-  useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
+
+  const warnMissingTableOnce = useCallback((error: DbErrorInfo) => {
+    if (missingTableWarnedRef.current) return;
+    missingTableWarnedRef.current = true;
+    console.error('[chatHistory] tables missing or not exposed:', error);
+    toast.error(userFacingSaveError(error));
+  }, []);
+
+  const upsertHistoryItem = useCallback((item: ConversationSummary) => {
+    setHistory((prev) => {
+      const without = prev.filter((h) => h.id !== item.id);
+      return [item, ...without]
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, MAX_HISTORY_CHATS);
+    });
+  }, []);
 
   const resetLocal = useCallback(() => {
     setMessages([]);
     setInput('');
     setIsLoading(false);
     setActiveConversationId(null);
+    activeConversationIdRef.current = null;
     setHistory([]);
     setSendError(null);
-    setHistoryUnavailable(false);
-    historyUnavailableRef.current = false;
+    missingTableWarnedRef.current = false;
   }, []);
 
-  const markHistoryUnavailable = useCallback(() => {
-    historyUnavailableRef.current = true;
-    setHistoryUnavailable(true);
-    setHistory([]);
-  }, []);
-
-  const fetchHistory = useCallback(async () => {
-    if (!user?.id || historyUnavailableRef.current) return;
+  const fetchHistory = useCallback(async (userId: string) => {
     setHistoryLoading(true);
-    const { data, error } = await supabase
-      .from('ai_chat_conversations')
-      .select('id, title, updated_at')
-      .eq('user_id', user.id)
-      .order('updated_at', { ascending: false });
+    const { data, error } = await fetchConversationHistory(userId);
 
     if (error) {
-      if (isMissingHistoryTable(error)) {
-        markHistoryUnavailable();
+      if (error.missingTable) {
+        warnMissingTableOnce(error);
+        setHistory([]);
       } else {
-        console.error('Failed to load chat history:', error);
+        console.error('[chatHistory] fetch failed:', error);
       }
     } else {
-      setHistory((data as ConversationRow[]) ?? []);
+      setHistory(data);
     }
     setHistoryLoading(false);
-  }, [user?.id, markHistoryUnavailable]);
+  }, [warnMissingTableOnce]);
 
-  const createConversation = useCallback(
-    async (firstQuestion: string): Promise<string | null> => {
-      if (!user?.id || historyUnavailableRef.current) return null;
+  const ensureConversation = useCallback(
+    async (userId: string, firstQuestion: string): Promise<string | null> => {
+      const existing = activeConversationIdRef.current;
+      if (existing) return existing;
 
-      const title = truncateTitle(firstQuestion);
-      const { data, error } = await supabase
-        .from('ai_chat_conversations')
-        .insert({ user_id: user.id, title })
-        .select('id')
-        .single();
-
-      if (error) {
-        if (isMissingHistoryTable(error)) {
-          markHistoryUnavailable();
-        } else {
-          console.error('Failed to create conversation:', error);
-          toast.error('Could not save this conversation. Your message will still be answered.');
+      const result = await dbCreateConversation(userId, firstQuestion);
+      if (!result.ok) {
+        if (result.error.missingTable) {
+          warnMissingTableOnce(result.error);
         }
         return null;
       }
 
-      const id = (data as { id: string }).id;
-      setActiveConversationId(id);
-      activeConversationIdRef.current = id;
-      return id;
+      setActiveConversationId(result.conversation.id);
+      activeConversationIdRef.current = result.conversation.id;
+      upsertHistoryItem(result.conversation);
+      return result.conversation.id;
     },
-    [user?.id, markHistoryUnavailable]
-  );
-
-  const persistMessage = useCallback(
-    async (
-      conversationId: string,
-      role: 'user' | 'assistant',
-      content: string,
-      sources?: Citation[]
-    ): Promise<ChatMessage | null> => {
-      const { data, error } = await supabase
-        .from('ai_chat_messages')
-        .insert({
-          conversation_id: conversationId,
-          role,
-          content,
-          sources: sources?.length ? sources : null,
-        })
-        .select('id, role, content, sources, created_at')
-        .single();
-
-      if (error) {
-        console.error('Failed to save message:', error);
-        return null;
-      }
-
-      await supabase
-        .from('ai_chat_conversations')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', conversationId);
-
-      return mapMessageRow(data as MessageRow);
-    },
-    []
+    [upsertHistoryItem, warnMissingTableOnce]
   );
 
   const startNewChat = useCallback(() => {
@@ -234,21 +175,16 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     setActiveConversationId(id);
     activeConversationIdRef.current = id;
 
-    const { data, error } = await supabase
-      .from('ai_chat_messages')
-      .select('id, role, content, sources, created_at')
-      .eq('conversation_id', id)
-      .order('created_at', { ascending: true });
-
+    const { data, error } = await loadConversationMessages(id);
     setConversationLoading(false);
 
     if (error) {
-      console.error('Failed to load conversation:', error);
+      console.error('[chatHistory] load conversation failed:', error);
       toast.error('Could not load this conversation. Please try again.');
       return;
     }
 
-    setMessages((data as MessageRow[]).map(mapMessageRow));
+    setMessages(data.map(mapMessageRow));
     setInput('');
   }, []);
 
@@ -257,7 +193,8 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const query = content.trim();
       if (!query || isLoadingRef.current) return;
 
-      if (!user?.id) {
+      const userId = await getAuthenticatedUserId();
+      if (!userId) {
         const msg = 'You must be signed in to send a message.';
         setSendError(msg);
         toast.error(msg);
@@ -268,30 +205,37 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       setIsLoading(true);
       isLoadingRef.current = true;
 
+      let conversationId = activeConversationIdRef.current;
+      let lastSaveError: DbErrorInfo | null = null;
+      let userMessagePersisted = false;
+
       try {
         const historySnapshot = messages;
         const optimisticUserId = generateId();
-        const optimisticUser: ChatMessage = {
-          id: optimisticUserId,
-          role: 'user',
-          content: query,
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, optimisticUser]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: optimisticUserId,
+            role: 'user',
+            content: query,
+            timestamp: new Date(),
+          },
+        ]);
         setInput('');
 
-        let conversationId = activeConversationIdRef.current;
-        if (!conversationId && !historyUnavailableRef.current) {
-          conversationId = await createConversation(query);
+        if (!conversationId) {
+          conversationId = await ensureConversation(userId, query);
         }
 
         if (conversationId) {
-          const savedUser = await persistMessage(conversationId, 'user', query);
-          if (savedUser) {
+          const userSave = await dbPersistMessage(conversationId, 'user', query);
+          if (userSave.ok) {
+            userMessagePersisted = true;
             setMessages((prev) =>
-              prev.map((m) => (m.id === optimisticUserId ? savedUser : m))
+              prev.map((m) => (m.id === optimisticUserId ? mapMessageRow(userSave.message) : m))
             );
+          } else {
+            lastSaveError = userSave.error;
           }
         }
 
@@ -304,29 +248,68 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         });
 
         const optimisticAssistantId = generateId();
-        const assistantMessage: ChatMessage = {
-          id: optimisticAssistantId,
-          role: 'assistant',
-          content: result.answer,
-          timestamp: new Date(),
-          sources: result.found ? result.citations : undefined,
-        };
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: optimisticAssistantId,
+            role: 'assistant',
+            content: result.answer,
+            timestamp: new Date(),
+            sources: result.found ? result.citations : undefined,
+          },
+        ]);
 
-        setMessages((prev) => [...prev, assistantMessage]);
+        if (!conversationId) {
+          conversationId = await ensureConversation(userId, query);
+        }
 
         if (conversationId) {
-          const savedAssistant = await persistMessage(
+          if (!userMessagePersisted) {
+            const retryUser = await dbPersistMessage(conversationId, 'user', query);
+            if (retryUser.ok) {
+              userMessagePersisted = true;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === optimisticUserId ? mapMessageRow(retryUser.message) : m))
+              );
+            } else {
+              lastSaveError = retryUser.error;
+            }
+          }
+
+          const assistantSave = await dbPersistMessage(
             conversationId,
             'assistant',
             result.answer,
             result.found ? result.citations : undefined
           );
-          if (savedAssistant) {
+
+          if (assistantSave.ok) {
             setMessages((prev) =>
-              prev.map((m) => (m.id === optimisticAssistantId ? savedAssistant : m))
+              prev.map((m) =>
+                m.id === optimisticAssistantId ? mapMessageRow(assistantSave.message) : m
+              )
             );
+            upsertHistoryItem({
+              id: conversationId,
+              title: history.find((h) => h.id === conversationId)?.title ?? query.slice(0, 56),
+              updated_at: new Date().toISOString(),
+            });
+          } else {
+            lastSaveError = assistantSave.error;
           }
-          await fetchHistory();
+
+          await dbPruneOldConversations(userId);
+          await fetchHistory(userId);
+        } else {
+          const createResult = await dbCreateConversation(userId, query);
+          lastSaveError = createResult.ok ? null : createResult.error;
+        }
+
+        if (lastSaveError) {
+          const friendly = userFacingSaveError(lastSaveError);
+          console.error('[chatHistory] save failed:', lastSaveError);
+          setSendError(friendly);
+          toast.error(friendly);
         }
       } catch (err) {
         const detail = err instanceof Error ? err.message : 'Unknown error';
@@ -350,7 +333,7 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         isLoadingRef.current = false;
       }
     },
-    [user?.id, messages, createConversation, persistMessage, fetchHistory]
+    [messages, ensureConversation, fetchHistory, history, upsertHistoryItem]
   );
 
   useEffect(() => {
@@ -363,7 +346,10 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       resetLocal();
       return;
     }
-    fetchHistory();
+    void (async () => {
+      await dbPruneOldConversations(uid);
+      await fetchHistory(uid);
+    })();
   }, [user?.id, ownerId, resetLocal, fetchHistory]);
 
   const value = useMemo(
