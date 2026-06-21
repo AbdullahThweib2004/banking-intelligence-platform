@@ -439,6 +439,13 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
+    console.info('[credit-risk] saving assessment with result_source =', riskSnapshot.result_source, {
+      score: riskSnapshot.risk_score,
+      category: riskSnapshot.risk_category,
+      recommended_action: riskSnapshot.recommended_action,
+      source,
+    });
+
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
       account_number: accountNumber.trim(),

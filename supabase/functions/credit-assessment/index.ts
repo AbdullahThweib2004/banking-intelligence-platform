@@ -25,6 +25,9 @@
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
+// Tight output cap: the JSON result is small and this keeps the request within
+// low-credit OpenRouter budgets (avoids HTTP 402).
+const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "800");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,6 +88,11 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
     application: payload,
   });
 
+  // NOTE: max_tokens MUST be set. Without it OpenRouter reserves the model's
+  // full output window (e.g. 16k) for cost estimation and rejects the request
+  // with HTTP 402 on low-credit accounts. The JSON result is small, so a tight
+  // cap is both cheaper and avoids the 402.
+  console.log("[credit-assessment] calling model:", CREDIT_MODEL);
   const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -98,6 +106,7 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
       temperature: 0,
       top_p: 1,
       seed: 7,
+      max_tokens: MAX_TOKENS,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
@@ -106,13 +115,20 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
     }),
   });
 
+  console.log("[credit-assessment] OpenRouter status:", res.status);
   if (!res.ok) {
     const detail = await res.text();
+    // detail is the provider error body (no secrets); safe to log.
+    console.error("[credit-assessment] OpenRouter error body:", detail);
     throw new Error(`AI request failed (${res.status}): ${detail}`);
   }
 
   const data = await res.json();
   const content = data?.choices?.[0]?.message?.content;
+  console.log(
+    "[credit-assessment] raw AI content:",
+    typeof content === "string" ? content.slice(0, 2000) : String(content),
+  );
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("AI returned an empty response");
   }
@@ -147,6 +163,11 @@ Deno.serve(async (req) => {
     const input = body?.input;
     const derived = body?.derived;
 
+    console.log("[credit-assessment] payload keys:", {
+      inputKeys: input && typeof input === "object" ? Object.keys(input) : null,
+      derivedKeys: derived && typeof derived === "object" ? Object.keys(derived) : null,
+    });
+
     if (!input || typeof input !== "object") {
       return json(400, { error: "Missing 'input' financial payload" });
     }
@@ -154,6 +175,12 @@ Deno.serve(async (req) => {
     const assessedAt = new Date().toISOString();
     const content = await callModel({ input, derived }, assessedAt);
     const parsed = extractJson(content) as Record<string, unknown>;
+    console.log("[credit-assessment] parsed result:", {
+      score: parsed?.score,
+      category: parsed?.category,
+      recommended_action: parsed?.recommended_action,
+      factors: Array.isArray(parsed?.top_factors) ? parsed.top_factors.length : 0,
+    });
 
     // Force server-controlled fields regardless of model drift.
     parsed.result_source = "ai";

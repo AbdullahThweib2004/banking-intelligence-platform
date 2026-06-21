@@ -216,16 +216,47 @@ export async function assessCreditRisk(
   const derived = buildDerivedFeatures(input);
   const payload = buildAssessmentPayload(input, derived);
 
+  console.info('[ai-credit] invoking edge function', EDGE_FUNCTION, {
+    inputKeys: Object.keys(payload.input),
+    derivedKeys: Object.keys(payload.derived),
+    fallbackEnabled: fallbackEnabled(),
+  });
+
   try {
     const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
       body: payload,
     });
 
-    if (error) throw error;
-    if (data?.error) throw new Error(String(data.error));
+    if (error) {
+      // Supabase wraps non-2xx responses; surface the function's JSON error body.
+      let detail = error.message;
+      try {
+        const ctx = (error as { context?: Response }).context;
+        if (ctx && typeof ctx.text === 'function') {
+          const text = await ctx.text();
+          if (text) detail = text;
+        }
+      } catch {
+        /* ignore */
+      }
+      console.error('[ai-credit] edge function returned an error:', detail);
+      throw new Error(detail);
+    }
+    if (data?.error) {
+      console.error('[ai-credit] edge function error payload:', data.error);
+      throw new Error(String(data.error));
+    }
 
+    console.info('[ai-credit] raw edge result:', data?.result);
     const result = parseAiCreditResult(data?.result, derived);
-    console.info('[ai-credit] assessment result:', result);
+    console.info('[ai-credit] parsed assessment result:', {
+      score: result.score,
+      category: result.category,
+      confidence: result.confidence,
+      recommended_action: result.recommended_action,
+      result_source: result.result_source,
+      factors: result.top_factors.length,
+    });
     return { snapshot: serializeAiAssessment(result), source: 'ai' };
   } catch (err) {
     console.error('[ai-credit] AI assessment failed:', err);
