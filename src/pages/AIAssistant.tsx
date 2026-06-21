@@ -1,11 +1,17 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import {
   Bot,
   Send,
@@ -14,26 +20,101 @@ import {
   ThumbsUp,
   ThumbsDown,
   Copy,
-  RefreshCw,
+  Plus,
   BookOpen,
-  HelpCircle,
+  History,
+  MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { answerQuestion, getAllChunks } from '@/lib/rag';
-import { useAIChat, type ChatMessage } from '@/contexts/AIChatContext';
-
-// A mixed English/Arabic set so users can try both languages directly.
-const suggestedQuestions = [
-  'What documents are required for a bank loan?',
-  'ما هي المستندات المطلوبة للتقديم على قرض؟',
-  'What is the minimum deposit for a savings account?',
-  'ما هو الحد الأدنى للإيداع لفتح حساب توفير؟',
-  'When should a complaint be escalated?',
-  'متى يجب تصعيد شكوى العميل؟',
-];
+import { useAIChat } from '@/contexts/AIChatContext';
 
 const isArabicText = (text: string) => /[\u0600-\u06FF]/.test(text);
+
+function formatHistoryDate(iso: string, language: string): string {
+  try {
+    return new Date(iso).toLocaleString(language === 'ar' ? 'ar' : 'en', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso.slice(0, 16);
+  }
+}
+
+interface HistoryListProps {
+  history: { id: string; title: string; updated_at: string }[];
+  historyLoading: boolean;
+  activeConversationId: string | null;
+  isLoading: boolean;
+  conversationLoading: boolean;
+  language: string;
+  onSelect: (id: string) => void;
+}
+
+function HistoryList({
+  history,
+  historyLoading,
+  activeConversationId,
+  isLoading,
+  conversationLoading,
+  language,
+  onSelect,
+}: HistoryListProps) {
+  if (historyLoading) {
+    return (
+      <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        {language === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
+      </div>
+    );
+  }
+
+  if (history.length === 0) {
+    return (
+      <div className="text-center py-10 px-2">
+        <MessageSquare className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+        <p className="text-sm text-muted-foreground">
+          {language === 'ar' ? 'لا توجد محادثات سابقة' : 'No previous conversations'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {history.map((item) => {
+        const active = activeConversationId === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item.id)}
+            disabled={isLoading || conversationLoading}
+            className={cn(
+              'w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors',
+              active
+                ? 'bg-primary/10 border border-primary/30 text-foreground'
+                : 'hover:bg-muted/80 text-foreground border border-transparent'
+            )}
+          >
+            <p
+              className="font-medium line-clamp-2 leading-snug"
+              dir={isArabicText(item.title) ? 'rtl' : 'ltr'}
+            >
+              {item.title}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {formatHistoryDate(item.updated_at, language)}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export const AIAssistant: React.FC = () => {
   const { t, language } = useLanguage();
@@ -41,73 +122,45 @@ export const AIAssistant: React.FC = () => {
     messages,
     input,
     isLoading,
+    conversationLoading,
+    history,
+    historyLoading,
+    activeConversationId,
+    sendError,
     setInput,
-    appendMessage,
-    setIsLoading,
-    clearConversation,
+    sendMessage,
+    startNewChat,
+    selectConversation,
   } = useAIChat();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const allChunks = getAllChunks();
-  const indexedSectionsCount = allChunks.length;
-  const indexedDocsCount = new Set(allChunks.map((c) => c.fileName)).size;
+  const handleSelectConversation = async (id: string) => {
+    await selectConversation(id);
+    setHistoryOpen(false);
+  };
 
   useEffect(() => {
     if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isLoading]);
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input,
-      timestamp: new Date(),
-    };
-
-    const query = input;
-    const historySnapshot = messages;
-    appendMessage(userMessage);
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      const result = await answerQuestion(query, {
-        history: historySnapshot.map((m) => ({
-          role: m.role,
-          content: m.content,
-          hadSources: Boolean(m.sources?.length),
-        })),
-      });
-
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: result.answer,
-        timestamp: new Date(),
-        sources: result.found ? result.citations : undefined,
-      };
-
-      appendMessage(assistantMessage);
-    } finally {
-      setIsLoading(false);
-    }
+    if (!input.trim() || isLoading || conversationLoading) return;
+    await sendMessage(input);
   };
 
-  const handleQuestionClick = (question: string) => {
-    setInput(question);
-    inputRef.current?.focus();
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    void handleSend();
   };
 
-  const handleFeedback = (messageId: string, positive: boolean) => {
+  const handleFeedback = (_messageId: string, _positive: boolean) => {
     toast.success(
-      language === 'ar'
-        ? 'شكراً على ملاحظاتك!'
-        : 'Thank you for your feedback!'
+      language === 'ar' ? 'شكراً على ملاحظاتك!' : 'Thank you for your feedback!'
     );
   };
 
@@ -116,13 +169,10 @@ export const AIAssistant: React.FC = () => {
     toast.success(language === 'ar' ? 'تم النسخ!' : 'Copied!');
   };
 
-  const questions = suggestedQuestions;
-
   return (
     <DashboardLayout>
       <div className="h-[calc(100vh-12rem)] flex flex-col animate-fade-in">
-        {/* Header */}
-        <div className="mb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground">{t('ai.title')}</h1>
             <p className="text-muted-foreground mt-1">
@@ -131,102 +181,161 @@ export const AIAssistant: React.FC = () => {
                 : 'Ask about bank policies, procedures, products, and internal guidelines only'}
             </p>
           </div>
-          {messages.length > 0 && (
+          <div className="flex gap-2 shrink-0 md:hidden">
+            <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <History className="h-4 w-4" />
+                  {language === 'ar' ? 'السجل' : 'History'}
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-80 flex flex-col">
+                <SheetHeader>
+                  <SheetTitle>{language === 'ar' ? 'السجل' : 'History'}</SheetTitle>
+                </SheetHeader>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-2 justify-start mt-4"
+                  onClick={() => {
+                    startNewChat();
+                    setHistoryOpen(false);
+                  }}
+                  disabled={isLoading || conversationLoading}
+                >
+                  <Plus className="h-4 w-4" />
+                  {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
+                </Button>
+                <ScrollArea className="flex-1 mt-4 -mx-2 px-2">
+                  <HistoryList
+                    history={history}
+                    historyLoading={historyLoading}
+                    activeConversationId={activeConversationId}
+                    isLoading={isLoading}
+                    conversationLoading={conversationLoading}
+                    language={language}
+                    onSelect={handleSelectConversation}
+                  />
+                </ScrollArea>
+              </SheetContent>
+            </Sheet>
             <Button
               variant="outline"
               size="sm"
-              className="gap-2 shrink-0"
-              onClick={clearConversation}
-              disabled={isLoading}
+              className="gap-2"
+              onClick={startNewChat}
+              disabled={isLoading || conversationLoading}
             >
-              <RefreshCw className="h-4 w-4" />
-              {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
+              <Plus className="h-4 w-4" />
+              {language === 'ar' ? 'جديد' : 'New'}
             </Button>
-          )}
+          </div>
         </div>
 
-        <div className="flex-1 flex gap-6 min-h-0">
-          {/* Chat Area */}
+        <div className="flex-1 flex gap-4 min-h-0">
+          {/* History sidebar */}
+          <Card className="hidden md:flex w-72 lg:w-80 flex-col min-h-0 shrink-0">
+            <CardHeader className="pb-3 space-y-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <History className="h-4 w-4" />
+                {language === 'ar' ? 'السجل' : 'History'}
+              </CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-2 justify-start"
+                onClick={startNewChat}
+                disabled={isLoading || conversationLoading}
+              >
+                <Plus className="h-4 w-4" />
+                {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
+              </Button>
+            </CardHeader>
+            <CardContent className="flex-1 min-h-0 p-0 pt-0">
+              <ScrollArea className="h-full px-4 pb-4">
+                <HistoryList
+                  history={history}
+                  historyLoading={historyLoading}
+                  activeConversationId={activeConversationId}
+                  isLoading={isLoading}
+                  conversationLoading={conversationLoading}
+                  language={language}
+                  onSelect={handleSelectConversation}
+                />
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          {/* Main chat */}
           <Card className="flex-1 flex flex-col min-h-0">
             <CardContent className="flex-1 flex flex-col p-0 min-h-0">
-              {/* Messages */}
               <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-                {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                {conversationLoading ? (
+                  <div className="flex items-center justify-center h-full py-16 text-muted-foreground text-sm">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                    {language === 'ar' ? 'جارٍ تحميل المحادثة...' : 'Loading conversation...'}
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center py-16">
                     <div className="p-4 rounded-full bg-primary/10 mb-4">
                       <Bot className="h-12 w-12 text-primary" />
                     </div>
                     <h3 className="text-xl font-semibold mb-2">
                       {language === 'ar' ? 'مرحباً! كيف يمكنني مساعدتك؟' : 'Hello! How can I help you?'}
                     </h3>
-                    <p className="text-muted-foreground max-w-md mb-6">
+                    <p className="text-muted-foreground max-w-md">
                       {language === 'ar'
-                        ? 'أنا مساعدك الذكي للإجابة على أسئلتك حول السياسات والإجراءات المصرفية'
-                        : "I answer from the bank's internal knowledge base — policies, procedures, and guidelines only"}
+                        ? 'اسأل عن سياسات البنك والإجراءات الداخلية. ستظهر محادثاتك السابقة في السجل.'
+                        : 'Ask about bank policies and procedures. Your past chats appear in History.'}
                     </p>
-                    
-                    {/* Suggested Questions */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 w-full max-w-2xl">
-                      {questions.map((question, index) => (
-                        <Button
-                          key={index}
-                          variant="outline"
-                          className="justify-start text-left h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/30"
-                          onClick={() => handleQuestionClick(question)}
-                        >
-                          <HelpCircle className="h-4 w-4 mr-2 flex-shrink-0 text-primary" />
-                          <span className="line-clamp-2" dir={isArabicText(question) ? 'rtl' : 'ltr'}>
-                            {question}
-                          </span>
-                        </Button>
-                      ))}
-                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {messages.map((message) => (
                       <div
                         key={message.id}
-                        className={cn(
-                          "flex gap-3",
-                          message.role === 'user' && "flex-row-reverse"
-                        )}
+                        className={cn('flex gap-3', message.role === 'user' && 'flex-row-reverse')}
                       >
-                        <div className={cn(
-                          "p-2 rounded-full flex-shrink-0",
-                          message.role === 'user' ? "bg-primary" : "bg-muted"
-                        )}>
+                        <div
+                          className={cn(
+                            'p-2 rounded-full flex-shrink-0',
+                            message.role === 'user' ? 'bg-primary' : 'bg-muted'
+                          )}
+                        >
                           {message.role === 'user' ? (
                             <User className="h-5 w-5 text-primary-foreground" />
                           ) : (
                             <Bot className="h-5 w-5 text-muted-foreground" />
                           )}
                         </div>
-                        
-                        <div className={cn(
-                          "flex-1 max-w-[80%]",
-                          message.role === 'user' && "text-right"
-                        )}>
-                          <div className={cn(
-                            "rounded-2xl p-4",
-                            message.role === 'user'
-                              ? "bg-primary text-primary-foreground rounded-tr-md"
-                              : "bg-muted rounded-tl-md"
-                          )}>
+
+                        <div
+                          className={cn(
+                            'flex-1 max-w-[85%]',
+                            message.role === 'user' && 'text-right'
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              'rounded-2xl p-4',
+                              message.role === 'user'
+                                ? 'bg-primary text-primary-foreground rounded-tr-md'
+                                : 'bg-muted rounded-tl-md'
+                            )}
+                          >
                             <p
                               className={cn(
-                                "whitespace-pre-wrap",
-                                isArabicText(message.content) ? "text-right" : "text-left"
+                                'whitespace-pre-wrap',
+                                isArabicText(message.content) ? 'text-right' : 'text-left'
                               )}
                               dir={isArabicText(message.content) ? 'rtl' : 'ltr'}
                             >
                               {message.content}
                             </p>
                           </div>
-                          
+
                           {message.role === 'assistant' && (
                             <div className="mt-2 space-y-2">
-                              {/* Sources */}
                               {message.sources && message.sources.length > 0 && (
                                 <div className="rounded-lg border border-border/60 bg-background/50 p-3">
                                   <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
@@ -250,7 +359,6 @@ export const AIAssistant: React.FC = () => {
                                 </div>
                               )}
 
-                              {/* Actions */}
                               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                                 <div className="flex gap-1">
                                   <Button
@@ -284,7 +392,7 @@ export const AIAssistant: React.FC = () => {
                         </div>
                       </div>
                     ))}
-                    
+
                     {isLoading && (
                       <div className="flex gap-3">
                         <div className="p-2 rounded-full bg-muted">
@@ -302,21 +410,26 @@ export const AIAssistant: React.FC = () => {
                 )}
               </ScrollArea>
 
-              {/* Input Area */}
               <div className="p-4 border-t">
+                {sendError && (
+                  <p className="text-sm text-destructive mb-2 text-center" role="alert">
+                    {sendError}
+                  </p>
+                )}
                 <div className="flex gap-3">
                   <Input
                     ref={inputRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                    onKeyDown={handleKeyDown}
                     placeholder={t('ai.placeholder')}
                     className="flex-1"
-                    disabled={isLoading}
+                    disabled={isLoading || conversationLoading}
                   />
                   <Button
-                    onClick={handleSend}
-                    disabled={!input.trim() || isLoading}
+                    type="button"
+                    onClick={() => void handleSend()}
+                    disabled={!input.trim() || isLoading || conversationLoading}
                     className="gradient-bg"
                   >
                     {isLoading ? (
@@ -334,62 +447,6 @@ export const AIAssistant: React.FC = () => {
               </div>
             </CardContent>
           </Card>
-
-          {/* Sidebar */}
-          <div className="hidden lg:block w-80 space-y-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">
-                  {language === 'ar' ? 'أسئلة مقترحة' : 'Suggested Questions'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {questions.map((question, index) => (
-                  <Button
-                    key={index}
-                    variant="ghost"
-                    className="w-full justify-start text-left h-auto py-2 px-3 text-sm"
-                    onClick={() => handleQuestionClick(question)}
-                  >
-                    <HelpCircle className="h-4 w-4 mr-2 flex-shrink-0 text-muted-foreground" />
-                    <span className="line-clamp-2" dir={isArabicText(question) ? 'rtl' : 'ltr'}>
-                      {question}
-                    </span>
-                  </Button>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">
-                  {language === 'ar' ? 'معلومات المساعد' : 'Assistant Info'}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">
-                    {language === 'ar' ? 'الوضع' : 'Mode'}
-                  </span>
-                  <Badge variant="outline">
-                    {language === 'ar' ? 'قاعدة معرفة السياسات' : 'Policy Knowledge Base'}
-                  </Badge>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">
-                    {language === 'ar' ? 'المستندات المفهرسة' : 'Indexed Docs'}
-                  </span>
-                  <span className="font-medium">{indexedDocsCount}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">
-                    {language === 'ar' ? 'الأقسام' : 'Sections'}
-                  </span>
-                  <span className="font-medium">{indexedSectionsCount}</span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </div>
       </div>
     </DashboardLayout>
