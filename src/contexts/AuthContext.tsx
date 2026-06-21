@@ -75,24 +75,35 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Set up the auth state listener FIRST.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser((session?.user as AuthUser) ?? null);
 
-      if (session?.user) {
-        setIsLoading(true);
-        // Defer the profile fetch out of the callback to avoid any deadlock with
-        // the Supabase auth client, then end loading once the profile resolves.
-        const userId = session.user.id;
-        setTimeout(() => {
-          loadProfile(userId).finally(() => setIsLoading(false));
-        }, 0);
-      } else {
-        // Session expired / signed out: clear user AND role together.
+      if (!session?.user) {
         setRole(null);
         setProfile(null);
         setIsLoading(false);
+        return;
       }
+
+      const userId = session.user.id;
+
+      // Token refresh on tab focus must NOT flip loading=true — that unmounts
+      // the entire app via RequireAuth and wipes in-memory UI state (e.g. chat).
+      if (event === 'TOKEN_REFRESHED') {
+        return;
+      }
+
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        setIsLoading(true);
+        setTimeout(() => {
+          loadProfile(userId).finally(() => setIsLoading(false));
+        }, 0);
+        return;
+      }
+
+      // Other events (USER_UPDATED, etc.) — refresh profile silently.
+      loadProfile(userId);
     });
 
     // THEN check for an existing session. Loading stays true until both the

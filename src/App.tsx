@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AIChatProvider } from "@/contexts/AIChatContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { ROLES } from "@/lib/roles";
 import Auth from "./pages/Auth";
@@ -159,6 +160,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <LanguageProvider>
       <AuthProvider>
+        <AIChatProvider>
         <TooltipProvider>
           <Toaster />
           <Sonner />
@@ -166,6 +168,7 @@ const App = () => (
             <AppRoutes />
           </BrowserRouter>
         </TooltipProvider>
+        </AIChatProvider>
       </AuthProvider>
     </LanguageProvider>
   </QueryClientProvider>

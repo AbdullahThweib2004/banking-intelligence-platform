@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,15 +20,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { answerQuestion, getAllChunks, type Citation } from '@/lib/rag';
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  sources?: Citation[];
-}
+import { answerQuestion, getAllChunks } from '@/lib/rag';
+import { useAIChat, type ChatMessage } from '@/contexts/AIChatContext';
 
 // A mixed English/Arabic set so users can try both languages directly.
 const suggestedQuestions = [
@@ -44,9 +37,15 @@ const isArabicText = (text: string) => /[\u0600-\u06FF]/.test(text);
 
 export const AIAssistant: React.FC = () => {
   const { t, language } = useLanguage();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const {
+    messages,
+    input,
+    isLoading,
+    setInput,
+    appendMessage,
+    setIsLoading,
+    clearConversation,
+  } = useAIChat();
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -63,7 +62,7 @@ export const AIAssistant: React.FC = () => {
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
-    const userMessage: Message = {
+    const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
       content: input,
@@ -71,22 +70,21 @@ export const AIAssistant: React.FC = () => {
     };
 
     const query = input;
-    setMessages(prev => [...prev, userMessage]);
+    const historySnapshot = messages;
+    appendMessage(userMessage);
     setInput('');
     setIsLoading(true);
 
-    // Retrieve from the policy knowledge base (Supabase pgvector, with a local
-    // keyword fallback). The answer is composed only from retrieved chunks.
     try {
       const result = await answerQuestion(query, {
-        history: messages.map((m) => ({
+        history: historySnapshot.map((m) => ({
           role: m.role,
           content: m.content,
           hadSources: Boolean(m.sources?.length),
         })),
       });
 
-      const assistantMessage: Message = {
+      const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: result.answer,
@@ -94,7 +92,7 @@ export const AIAssistant: React.FC = () => {
         sources: result.found ? result.citations : undefined,
       };
 
-      setMessages(prev => [...prev, assistantMessage]);
+      appendMessage(assistantMessage);
     } finally {
       setIsLoading(false);
     }
@@ -124,13 +122,27 @@ export const AIAssistant: React.FC = () => {
     <DashboardLayout>
       <div className="h-[calc(100vh-12rem)] flex flex-col animate-fade-in">
         {/* Header */}
-        <div className="mb-4">
-          <h1 className="text-3xl font-bold text-foreground">{t('ai.title')}</h1>
-          <p className="text-muted-foreground mt-1">
-            {language === 'ar'
-              ? 'اسأل عن سياسات البنك والإجراءات والمنتجات والإرشادات الداخلية فقط'
-              : 'Ask about bank policies, procedures, products, and internal guidelines only'}
-          </p>
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">{t('ai.title')}</h1>
+            <p className="text-muted-foreground mt-1">
+              {language === 'ar'
+                ? 'اسأل عن سياسات البنك والإجراءات والمنتجات والإرشادات الداخلية فقط'
+                : 'Ask about bank policies, procedures, products, and internal guidelines only'}
+            </p>
+          </div>
+          {messages.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 shrink-0"
+              onClick={clearConversation}
+              disabled={isLoading}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
+            </Button>
+          )}
         </div>
 
         <div className="flex-1 flex gap-6 min-h-0">
