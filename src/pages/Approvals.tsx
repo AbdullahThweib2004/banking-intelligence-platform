@@ -41,11 +41,19 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
+import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
+import {
+  hasSavedRiskExplanation,
+  type SavedRiskExplanation,
+  type FeatureContribution,
+  type DerivedFeatures,
+} from '@/lib/creditScoring';
 
 interface ApprovalRequest {
   id: string;
   type: 'credit' | 'document' | 'exception';
   customerName: string;
+  accountNumber?: string;
   employeeName: string;
   requestDate: string;
   amount?: number;
@@ -54,6 +62,7 @@ interface ApprovalRequest {
   status: 'pending' | 'approved' | 'rejected';
   notes?: string;
   priority: 'normal' | 'high' | 'urgent';
+  savedRiskExplanation: SavedRiskExplanation | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table.
@@ -61,6 +70,7 @@ interface ApprovalRow {
   id: string;
   type: ApprovalRequest['type'];
   customer_name: string;
+  account_number: string | null;
   employee_id: string | null;
   request_date: string | null;
   created_at: string;
@@ -70,7 +80,24 @@ interface ApprovalRow {
   status: ApprovalRequest['status'];
   notes: string | null;
   priority: ApprovalRequest['priority'] | null;
+  risk_explanation_summary?: string | null;
+  risk_top_factors?: FeatureContribution[] | null;
+  risk_derived_features?: DerivedFeatures | null;
+  assessed_at?: string | null;
 }
+
+// Parse the saved risk explanation snapshot from a row without recalculating.
+const parseSavedRiskExplanation = (row: ApprovalRow): SavedRiskExplanation | null => {
+  if (!hasSavedRiskExplanation(row)) return null;
+  return {
+    risk_score: row.risk_score ?? 0,
+    risk_category: row.risk_category ?? 'low',
+    risk_explanation_summary: row.risk_explanation_summary ?? '',
+    risk_top_factors: (row.risk_top_factors ?? []) as FeatureContribution[],
+    risk_derived_features: row.risk_derived_features as DerivedFeatures,
+    assessed_at: row.assessed_at as string,
+  };
+};
 
 const mapRow = (
   row: ApprovalRow,
@@ -79,6 +106,7 @@ const mapRow = (
   id: row.id,
   type: row.type,
   customerName: row.customer_name,
+  accountNumber: row.account_number ?? undefined,
   employeeName: (row.employee_id && employeeNameById.get(row.employee_id)) || '—',
   requestDate: row.request_date ?? row.created_at,
   amount: row.amount ?? undefined,
@@ -87,6 +115,7 @@ const mapRow = (
   status: row.status,
   notes: row.notes ?? undefined,
   priority: row.priority ?? 'normal',
+  savedRiskExplanation: parseSavedRiskExplanation(row),
 });
 
 const getRiskColor = (category?: ApprovalRequest['riskCategory']) => {
@@ -120,6 +149,8 @@ export const Approvals: React.FC = () => {
   const [actionType, setActionType] = useState<'approve' | 'reject' | 'view' | null>(null);
   const [comment, setComment] = useState('');
   const [activeTab, setActiveTab] = useState('pending');
+  const [riskExplanationOpen, setRiskExplanationOpen] = useState(false);
+  const [riskExplanationApproval, setRiskExplanationApproval] = useState<ApprovalRequest | null>(null);
 
   const fetchApprovals = useCallback(async () => {
     let query = supabase.from('approval_requests').select('*');
@@ -178,6 +209,12 @@ export const Approvals: React.FC = () => {
     setActionType(action);
     setIsDialogOpen(true);
     setComment('');
+  };
+
+  // Eye icon: open the saved risk explanation snapshot (read-only, no recompute).
+  const openRiskExplanation = (approval: ApprovalRequest) => {
+    setRiskExplanationApproval(approval);
+    setRiskExplanationOpen(true);
   };
 
   const confirmAction = async () => {
@@ -431,21 +468,32 @@ export const Approvals: React.FC = () => {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleAction(approval, 'view')}
+                            onClick={() => openRiskExplanation(approval)}
+                            title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
                         </div>
                       ) : (
-                        <Badge className={
-                          approval.status === 'approved'
-                            ? 'bg-success/10 text-success'
-                            : 'bg-destructive/10 text-destructive'
-                        }>
-                          {approval.status === 'approved'
-                            ? (language === 'ar' ? 'موافق عليه' : 'Approved')
-                            : (language === 'ar' ? 'مرفوض' : 'Rejected')}
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Badge className={
+                            approval.status === 'approved'
+                              ? 'bg-success/10 text-success'
+                              : 'bg-destructive/10 text-destructive'
+                          }>
+                            {approval.status === 'approved'
+                              ? (language === 'ar' ? 'موافق عليه' : 'Approved')
+                              : (language === 'ar' ? 'مرفوض' : 'Rejected')}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openRiskExplanation(approval)}
+                            title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -463,6 +511,71 @@ export const Approvals: React.FC = () => {
             canReview={isRole(ROLES.RISK)}
           />
         )}
+
+        {/* Saved risk explanation (read-only, loaded from the saved snapshot) */}
+        <Dialog
+          open={riskExplanationOpen}
+          onOpenChange={(open) => {
+            setRiskExplanationOpen(open);
+            if (!open) setRiskExplanationApproval(null);
+          }}
+        >
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {language === 'ar' ? 'تفسير تقييم المخاطر' : 'Risk assessment explanation'}
+              </DialogTitle>
+              <DialogDescription>
+                {language === 'ar' ? 'عرض للقراءة فقط للبيانات المحفوظة' : 'Read-only view of the saved snapshot'}
+              </DialogDescription>
+            </DialogHeader>
+
+            {riskExplanationApproval && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg border bg-background p-3 text-sm">
+                <div>
+                  <p className="text-muted-foreground">
+                    {language === 'ar' ? 'اسم العميل' : 'Customer name'}
+                  </p>
+                  <p className="font-medium">{riskExplanationApproval.customerName}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">
+                    {language === 'ar' ? 'رقم الحساب' : 'Account number'}
+                  </p>
+                  <p className="font-medium">{riskExplanationApproval.accountNumber ?? '—'}</p>
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-muted-foreground">
+                    {language === 'ar' ? 'رقم الطلب' : 'Approval request ID'}
+                  </p>
+                  <p className="font-medium font-mono text-xs break-all">
+                    {riskExplanationApproval.id}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {riskExplanationApproval?.savedRiskExplanation ? (
+              <SavedRiskExplanationView
+                explanation={riskExplanationApproval.savedRiskExplanation}
+                language={language}
+                className="mt-4"
+              />
+            ) : (
+              <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-muted-foreground text-sm">
+                {language === 'ar'
+                  ? 'لا يوجد تفسير محفوظ لهذا التقييم.'
+                  : 'No saved risk explanation is available for this assessment.'}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRiskExplanationOpen(false)}>
+                {language === 'ar' ? 'إغلاق' : 'Close'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Action Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
