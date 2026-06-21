@@ -54,8 +54,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { computeCreditScore, type CreditScoreResult } from '@/lib/creditScoring';
-import { CreditScoreExplanation } from '@/components/CreditScoreExplanation';
+import { computeCreditScore, serializeRiskExplanation, hasSavedRiskExplanation, type CreditScoreResult, type SavedRiskExplanation, type FeatureContribution, type DerivedFeatures } from '@/lib/creditScoring';
+import { CreditScoreExplanation, SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 
 interface CreditApplication {
   id: string;
@@ -66,6 +66,7 @@ interface CreditApplication {
   riskCategory: 'low' | 'medium' | 'high';
   status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval';
   employeeId: string;
+  savedRiskExplanation: SavedRiskExplanation | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table (credit type).
@@ -79,6 +80,22 @@ interface ApprovalRow {
   risk_category: CreditApplication['riskCategory'] | null;
   status: CreditApplication['status'];
   employee_id: string | null;
+  risk_explanation_summary?: string | null;
+  risk_top_factors?: FeatureContribution[] | null;
+  risk_derived_features?: DerivedFeatures | null;
+  assessed_at?: string | null;
+}
+
+function parseSavedRiskExplanation(row: ApprovalRow): SavedRiskExplanation | null {
+  if (!hasSavedRiskExplanation(row)) return null;
+  return {
+    risk_score: row.risk_score ?? 0,
+    risk_category: row.risk_category ?? 'low',
+    risk_explanation_summary: row.risk_explanation_summary ?? '',
+    risk_top_factors: (row.risk_top_factors ?? []) as FeatureContribution[],
+    risk_derived_features: row.risk_derived_features as DerivedFeatures,
+    assessed_at: row.assessed_at as string,
+  };
 }
 
 const mapRow = (row: ApprovalRow): CreditApplication => ({
@@ -90,6 +107,7 @@ const mapRow = (row: ApprovalRow): CreditApplication => ({
   riskCategory: row.risk_category ?? 'low',
   status: row.status,
   employeeId: row.employee_id ?? '',
+  savedRiskExplanation: parseSavedRiskExplanation(row),
 });
 
 const getRiskColor = (category: CreditApplication['riskCategory']) => {
@@ -168,7 +186,8 @@ export const CreditRisk: React.FC = () => {
   const { stats, loading: statsLoading, error: statsError } = useCreditRiskStats();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
-  const [selectedApplication, setSelectedApplication] = useState<CreditApplication | null>(null);
+  const [riskExplanationOpen, setRiskExplanationOpen] = useState(false);
+  const [riskExplanationApp, setRiskExplanationApp] = useState<CreditApplication | null>(null);
   const [applications, setApplications] = useState<CreditApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -397,7 +416,7 @@ export const CreditRisk: React.FC = () => {
 
     setAssessmentSubmitting(true);
 
-    const scoringNote = `DSR=${scoring.features.debt_service_ratio}; loan=${requestedLoanAmount}; top_factor=${scoring.contributions[0]?.key ?? 'n/a'}`;
+    const riskSnapshot = serializeRiskExplanation(scoring);
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
       account_number: accountNumber.trim(),
@@ -409,14 +428,18 @@ export const CreditRisk: React.FC = () => {
       employment_type: formData.employmentType || null,
       loan_purpose: formData.loanPurpose || null,
       amount: requestedLoanAmount,
-      risk_score: scoring.score,
-      risk_category: scoring.category,
+      risk_score: riskSnapshot.risk_score,
+      risk_category: riskSnapshot.risk_category,
+      risk_explanation_summary: riskSnapshot.risk_explanation_summary,
+      risk_top_factors: riskSnapshot.risk_top_factors,
+      risk_derived_features: riskSnapshot.risk_derived_features,
+      assessed_at: riskSnapshot.assessed_at,
       priority: scoring.category === 'high' ? 'urgent' : 'normal',
       status: 'pending',
       employee_id: user?.id ?? null,
       notes: formData.loanPurpose
-        ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose} | ${scoringNote}`
-        : `Account: ${accountNumber.trim()} | ${scoringNote}`,
+        ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose}`
+        : `Account: ${accountNumber.trim()}`,
     });
 
     setAssessmentSubmitting(false);
@@ -569,6 +592,11 @@ export const CreditRisk: React.FC = () => {
     );
     resetObjection();
     setIsObjectionOpen(false);
+  };
+
+  const openRiskExplanation = (app: CreditApplication) => {
+    setRiskExplanationApp(app);
+    setRiskExplanationOpen(true);
   };
 
   const filteredApplications = applications.filter(app =>
@@ -1119,7 +1147,14 @@ export const CreditRisk: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button variant="ghost" size="icon">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openRiskExplanation(app)}
+                          title={
+                            language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'
+                          }
+                        >
                           <Eye className="h-4 w-4" />
                         </Button>
                         {app.status === 'pending' && isRole(ROLES.RISK) && (
@@ -1155,6 +1190,39 @@ export const CreditRisk: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+
+        <Dialog
+          open={riskExplanationOpen}
+          onOpenChange={(open) => {
+            setRiskExplanationOpen(open);
+            if (!open) setRiskExplanationApp(null);
+          }}
+        >
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {language === 'ar' ? 'تفسير تقييم المخاطر' : 'Risk assessment explanation'}
+              </DialogTitle>
+              <DialogDescription>
+                {riskExplanationApp
+                  ? `${riskExplanationApp.customerName} · ₪${riskExplanationApp.loanAmount.toLocaleString()} · ${riskExplanationApp.id.slice(0, 8)}…`
+                  : ''}
+              </DialogDescription>
+            </DialogHeader>
+            {riskExplanationApp?.savedRiskExplanation ? (
+              <SavedRiskExplanationView
+                explanation={riskExplanationApp.savedRiskExplanation}
+                language={language}
+              />
+            ) : (
+              <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground text-sm">
+                {language === 'ar'
+                  ? 'لا يوجد تفسير محفوظ لهذا التقييم.'
+                  : 'No saved risk explanation is available for this assessment.'}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

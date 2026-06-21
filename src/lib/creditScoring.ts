@@ -56,6 +56,64 @@ export interface CreditScoreResult {
   };
 }
 
+/** Snapshot persisted on approval_requests and shown in the view modal. */
+export interface SavedRiskExplanation {
+  risk_score: number;
+  risk_category: 'low' | 'medium' | 'high';
+  risk_explanation_summary: string;
+  risk_top_factors: FeatureContribution[];
+  risk_derived_features: DerivedFeatures;
+  assessed_at: string;
+}
+
+export function buildExplanationSummary(
+  result: CreditScoreResult,
+  language: 'en' | 'ar' = 'en'
+): string {
+  const top = result.contributions.filter((c) => Math.abs(c.impact) >= 0.5).slice(0, 3);
+  const dsr = (result.features.debt_service_ratio * 100).toFixed(1);
+  const loan = result.features.requested_loan_amount.toLocaleString();
+
+  if (language === 'ar') {
+    const factors = top
+      .map((f) => `${f.labelAr} (${f.impact > 0 ? '+' : ''}${f.impact.toFixed(1)})`)
+      .join('؛ ');
+    return `تم احتساب درجة ${result.score} (${result.category}) بناءً على نسبة خدمة الدين ${dsr}% وقرض مطلوب ₪${loan}. أهم العوامل: ${factors || '—'}.`;
+  }
+
+  const factors = top
+    .map((f) => `${f.labelEn} (${f.impact > 0 ? '+' : ''}${f.impact.toFixed(1)} pts)`)
+    .join('; ');
+  return `Score ${result.score} (${result.category} risk) driven by a ${dsr}% debt service ratio and requested loan of ₪${loan}. Top factors: ${factors || '—'}.`;
+}
+
+export function serializeRiskExplanation(result: CreditScoreResult): SavedRiskExplanation {
+  const topFactors = result.contributions
+    .filter((c) => Math.abs(c.impact) >= 0.5)
+    .slice(0, 6);
+
+  return {
+    risk_score: result.score,
+    risk_category: result.category,
+    risk_explanation_summary: buildExplanationSummary(result, 'en'),
+    risk_top_factors: topFactors,
+    risk_derived_features: result.features,
+    assessed_at: new Date().toISOString(),
+  };
+}
+
+export function hasSavedRiskExplanation(row: {
+  risk_top_factors?: unknown;
+  risk_derived_features?: unknown;
+  assessed_at?: string | null;
+}): boolean {
+  return (
+    row.risk_top_factors != null &&
+    row.risk_derived_features != null &&
+    row.assessed_at != null
+  );
+}
+
 const LOAN_TERM_MONTHS = 60;
 const ANNUAL_INTEREST_RATE = 0.09;
 
