@@ -54,8 +54,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { computeCreditScore, serializeRiskExplanation, hasSavedRiskExplanation, type CreditScoreResult, type SavedRiskExplanation, type FeatureContribution, type DerivedFeatures } from '@/lib/creditScoring';
-import { CreditScoreExplanation, SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
+import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
+import { assessCreditRisk } from '@/lib/aiCreditAssessment';
+import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 
 interface CreditApplication {
   id: string;
@@ -81,8 +82,11 @@ interface ApprovalRow {
   status: CreditApplication['status'];
   employee_id: string | null;
   risk_explanation_summary?: string | null;
-  risk_top_factors?: FeatureContribution[] | null;
+  risk_top_factors?: SavedTopFactor[] | null;
   risk_derived_features?: DerivedFeatures | null;
+  risk_confidence?: number | null;
+  recommended_action?: RecommendedAction | null;
+  result_source?: ResultSource | null;
   assessed_at?: string | null;
 }
 
@@ -91,9 +95,12 @@ function parseSavedRiskExplanation(row: ApprovalRow): SavedRiskExplanation | nul
   return {
     risk_score: row.risk_score ?? 0,
     risk_category: row.risk_category ?? 'low',
+    risk_confidence: row.risk_confidence ?? null,
     risk_explanation_summary: row.risk_explanation_summary ?? '',
-    risk_top_factors: (row.risk_top_factors ?? []) as FeatureContribution[],
+    risk_top_factors: (row.risk_top_factors ?? []) as SavedTopFactor[],
     risk_derived_features: row.risk_derived_features as DerivedFeatures,
+    recommended_action: row.recommended_action ?? null,
+    result_source: row.result_source ?? null,
     assessed_at: row.assessed_at as string,
   };
 }
@@ -288,7 +295,7 @@ export const CreditRisk: React.FC = () => {
   const [customerLoanRestricted, setCustomerLoanRestricted] = useState(false);
   const [loadCustomerLoading, setLoadCustomerLoading] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
-  const [assessmentResult, setAssessmentResult] = useState<CreditScoreResult | null>(null);
+  const [assessmentResult, setAssessmentResult] = useState<SavedRiskExplanation | null>(null);
   const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
 
   const resetAssessmentForm = () => {
@@ -405,18 +412,33 @@ export const CreditRisk: React.FC = () => {
     const existing = Number(formData.existingLoans) || 0;
     const requestedLoanAmount = Number(formData.loanAmount) || 0;
 
-    const scoring = computeCreditScore({
-      monthlyIncome: income,
-      monthlyExpenses: expenses,
-      existingLoans: existing,
-      requestedLoanAmount,
-      employmentType: formData.employmentType,
-      loanPurpose: formData.loanPurpose,
-    });
-
     setAssessmentSubmitting(true);
 
-    const riskSnapshot = serializeRiskExplanation(scoring);
+    // The AI service is the source of truth for the assessment result.
+    let riskSnapshot: SavedRiskExplanation;
+    let source: 'ai' | 'algorithm';
+    try {
+      const outcome = await assessCreditRisk({
+        monthlyIncome: income,
+        monthlyExpenses: expenses,
+        existingLoans: existing,
+        requestedLoanAmount,
+        employmentType: formData.employmentType,
+        loanPurpose: formData.loanPurpose,
+      });
+      riskSnapshot = outcome.snapshot;
+      source = outcome.source;
+    } catch (err) {
+      setAssessmentSubmitting(false);
+      console.error('AI assessment failed:', err);
+      toast.error(
+        language === 'ar'
+          ? 'تعذّر إجراء تقييم المخاطر بالذكاء الاصطناعي. حاول مرة أخرى.'
+          : 'AI risk assessment failed. Please try again.'
+      );
+      return;
+    }
+
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
       account_number: accountNumber.trim(),
@@ -430,11 +452,14 @@ export const CreditRisk: React.FC = () => {
       amount: requestedLoanAmount,
       risk_score: riskSnapshot.risk_score,
       risk_category: riskSnapshot.risk_category,
+      risk_confidence: riskSnapshot.risk_confidence,
       risk_explanation_summary: riskSnapshot.risk_explanation_summary,
       risk_top_factors: riskSnapshot.risk_top_factors,
       risk_derived_features: riskSnapshot.risk_derived_features,
+      recommended_action: riskSnapshot.recommended_action,
+      result_source: riskSnapshot.result_source,
       assessed_at: riskSnapshot.assessed_at,
-      priority: scoring.category === 'high' ? 'urgent' : 'normal',
+      priority: riskSnapshot.risk_category === 'high' ? 'urgent' : 'normal',
       status: 'pending',
       employee_id: user?.id ?? null,
       notes: formData.loanPurpose
@@ -454,12 +479,18 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
+    const engineNote =
+      source === 'algorithm'
+        ? language === 'ar'
+          ? ' (نموذج احتياطي)'
+          : ' (fallback engine)'
+        : '';
     toast.success(
       language === 'ar'
-        ? `تم حساب درجة المخاطر: ${scoring.score} وإرسال الطلب للموافقة`
-        : `Risk score calculated: ${scoring.score} — sent for approval`
+        ? `تم حساب درجة المخاطر: ${riskSnapshot.risk_score} وإرسال الطلب للموافقة${engineNote}`
+        : `Risk score calculated: ${riskSnapshot.risk_score} — sent for approval${engineNote}`
     );
-    setAssessmentResult(scoring);
+    setAssessmentResult(riskSnapshot);
     fetchApplications();
   };
 
@@ -645,7 +676,7 @@ export const CreditRisk: React.FC = () => {
               <div className="space-y-6 py-4">
                 {assessmentResult ? (
                   <>
-                    <CreditScoreExplanation result={assessmentResult} language={language} />
+                    <SavedRiskExplanationView explanation={assessmentResult} language={language} />
                     <div className="flex justify-end">
                       <Button
                         onClick={() => {

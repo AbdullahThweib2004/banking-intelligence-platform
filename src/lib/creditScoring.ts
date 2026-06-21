@@ -41,6 +41,23 @@ export interface FeatureContribution {
   impact: number;
 }
 
+/** Qualitative factor shape returned by the AI assessment service. */
+export interface AiTopFactor {
+  label: string;
+  /** Qualitative magnitude: "high" | "medium" | "low". */
+  impact: string;
+  /** "increases risk" | "decreases risk". */
+  direction: string;
+  /** Short human-readable value, e.g. "64%". */
+  value: string;
+}
+
+/** A saved top factor may originate from the AI service or the legacy math engine. */
+export type SavedTopFactor = AiTopFactor | FeatureContribution;
+
+export type RecommendedAction = 'approve' | 'manual_review' | 'reject';
+export type ResultSource = 'ai' | 'algorithm';
+
 export interface CreditScoreResult {
   score: number;
   category: 'low' | 'medium' | 'high';
@@ -60,9 +77,12 @@ export interface CreditScoreResult {
 export interface SavedRiskExplanation {
   risk_score: number;
   risk_category: 'low' | 'medium' | 'high';
+  risk_confidence?: number | null;
   risk_explanation_summary: string;
-  risk_top_factors: FeatureContribution[];
+  risk_top_factors: SavedTopFactor[];
   risk_derived_features: DerivedFeatures;
+  recommended_action?: RecommendedAction | null;
+  result_source?: ResultSource | null;
   assessed_at: string;
 }
 
@@ -92,12 +112,18 @@ export function serializeRiskExplanation(result: CreditScoreResult): SavedRiskEx
     .filter((c) => Math.abs(c.impact) >= 0.5)
     .slice(0, 6);
 
+  const recommended_action: RecommendedAction =
+    result.category === 'low' ? 'approve' : result.category === 'medium' ? 'manual_review' : 'reject';
+
   return {
     risk_score: result.score,
     risk_category: result.category,
+    risk_confidence: null,
     risk_explanation_summary: buildExplanationSummary(result, 'en'),
     risk_top_factors: topFactors,
     risk_derived_features: result.features,
+    recommended_action,
+    result_source: 'algorithm',
     assessed_at: new Date().toISOString(),
   };
 }

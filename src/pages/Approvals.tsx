@@ -45,8 +45,10 @@ import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import {
   hasSavedRiskExplanation,
   type SavedRiskExplanation,
-  type FeatureContribution,
+  type SavedTopFactor,
   type DerivedFeatures,
+  type RecommendedAction,
+  type ResultSource,
 } from '@/lib/creditScoring';
 
 interface ApprovalRequest {
@@ -81,8 +83,11 @@ interface ApprovalRow {
   notes: string | null;
   priority: ApprovalRequest['priority'] | null;
   risk_explanation_summary?: string | null;
-  risk_top_factors?: FeatureContribution[] | null;
+  risk_top_factors?: SavedTopFactor[] | null;
   risk_derived_features?: DerivedFeatures | null;
+  risk_confidence?: number | null;
+  recommended_action?: RecommendedAction | null;
+  result_source?: ResultSource | null;
   assessed_at?: string | null;
 }
 
@@ -92,9 +97,12 @@ const parseSavedRiskExplanation = (row: ApprovalRow): SavedRiskExplanation | nul
   return {
     risk_score: row.risk_score ?? 0,
     risk_category: row.risk_category ?? 'low',
+    risk_confidence: row.risk_confidence ?? null,
     risk_explanation_summary: row.risk_explanation_summary ?? '',
-    risk_top_factors: (row.risk_top_factors ?? []) as FeatureContribution[],
+    risk_top_factors: (row.risk_top_factors ?? []) as SavedTopFactor[],
     risk_derived_features: row.risk_derived_features as DerivedFeatures,
+    recommended_action: row.recommended_action ?? null,
+    result_source: row.result_source ?? null,
     assessed_at: row.assessed_at as string,
   };
 };
