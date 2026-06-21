@@ -54,6 +54,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { computeCreditScore, type CreditScoreResult } from '@/lib/creditScoring';
+import { CreditScoreExplanation } from '@/components/CreditScoreExplanation';
 
 interface CreditApplication {
   id: string;
@@ -267,6 +269,8 @@ export const CreditRisk: React.FC = () => {
   const [customerLoanRestricted, setCustomerLoanRestricted] = useState(false);
   const [loadCustomerLoading, setLoadCustomerLoading] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
+  const [assessmentResult, setAssessmentResult] = useState<CreditScoreResult | null>(null);
+  const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
 
   const resetAssessmentForm = () => {
     setAccountNumber('');
@@ -274,6 +278,8 @@ export const CreditRisk: React.FC = () => {
     setCustomerLoanRestricted(false);
     setLoadCustomerLoading(false);
     setFormData({ ...EMPTY_ASSESSMENT_FORM });
+    setAssessmentResult(null);
+    setAssessmentSubmitting(false);
   };
 
   const handleInputChange = (field: string, value: string) => {
@@ -375,16 +381,23 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
-    // Simulate ML risk score calculation (uses loaded financial profile).
     const income = Number(formData.monthlyIncome) || 0;
     const expenses = Number(formData.monthlyExpenses) || 0;
     const existing = Number(formData.existingLoans) || 0;
-    const debtRatio = income > 0 ? (expenses + existing / 12) / income : 1;
-    const baseScore = Math.min(100, Math.max(0, Math.round(debtRatio * 60 + Math.random() * 25)));
-    const simulatedScore = baseScore;
-    const riskCategory =
-      simulatedScore < 40 ? 'low' : simulatedScore < 70 ? 'medium' : 'high';
+    const requestedLoanAmount = Number(formData.loanAmount) || 0;
 
+    const scoring = computeCreditScore({
+      monthlyIncome: income,
+      monthlyExpenses: expenses,
+      existingLoans: existing,
+      requestedLoanAmount,
+      employmentType: formData.employmentType,
+      loanPurpose: formData.loanPurpose,
+    });
+
+    setAssessmentSubmitting(true);
+
+    const scoringNote = `DSR=${scoring.features.debt_service_ratio}; loan=${requestedLoanAmount}; top_factor=${scoring.contributions[0]?.key ?? 'n/a'}`;
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
       account_number: accountNumber.trim(),
@@ -395,16 +408,18 @@ export const CreditRisk: React.FC = () => {
       existing_loans: existing || null,
       employment_type: formData.employmentType || null,
       loan_purpose: formData.loanPurpose || null,
-      amount: Number(formData.loanAmount),
-      risk_score: simulatedScore,
-      risk_category: riskCategory,
-      priority: riskCategory === 'high' ? 'urgent' : 'normal',
+      amount: requestedLoanAmount,
+      risk_score: scoring.score,
+      risk_category: scoring.category,
+      priority: scoring.category === 'high' ? 'urgent' : 'normal',
       status: 'pending',
       employee_id: user?.id ?? null,
       notes: formData.loanPurpose
-        ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose}`
-        : `Account: ${accountNumber.trim()}`,
+        ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose} | ${scoringNote}`
+        : `Account: ${accountNumber.trim()} | ${scoringNote}`,
     });
+
+    setAssessmentSubmitting(false);
 
     if (error) {
       console.error('Failed to create assessment:', error);
@@ -418,11 +433,10 @@ export const CreditRisk: React.FC = () => {
 
     toast.success(
       language === 'ar'
-        ? `تم حساب درجة المخاطر: ${simulatedScore} وإرسال الطلب للموافقة`
-        : `Risk score calculated: ${simulatedScore} — sent for approval`
+        ? `تم حساب درجة المخاطر: ${scoring.score} وإرسال الطلب للموافقة`
+        : `Risk score calculated: ${scoring.score} — sent for approval`
     );
-    resetAssessmentForm();
-    setIsNewAssessmentOpen(false);
+    setAssessmentResult(scoring);
     fetchApplications();
   };
 
@@ -601,6 +615,23 @@ export const CreditRisk: React.FC = () => {
               </DialogHeader>
               
               <div className="space-y-6 py-4">
+                {assessmentResult ? (
+                  <>
+                    <CreditScoreExplanation result={assessmentResult} language={language} />
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={() => {
+                          resetAssessmentForm();
+                          setIsNewAssessmentOpen(false);
+                        }}
+                        className="gradient-bg"
+                      >
+                        {language === 'ar' ? 'تم' : 'Done'}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                <>
                 {/* Account lookup */}
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الحساب' : 'Account Number'}</Label>
@@ -781,8 +812,11 @@ export const CreditRisk: React.FC = () => {
                   <Button
                     onClick={handleSubmitAssessment}
                     className="gradient-bg"
-                    disabled={customerLoanRestricted}
+                    disabled={customerLoanRestricted || assessmentSubmitting}
                   >
+                    {assessmentSubmitting && (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    )}
                     {language === 'ar' ? 'تقييم المخاطر' : 'Assess Risk'}
                   </Button>
                 </div>
@@ -795,6 +829,8 @@ export const CreditRisk: React.FC = () => {
                       ? 'أدخل رقم الحساب واضغط «تحميل العميل» لعرض النموذج'
                       : 'Enter an account number and click Load Customer to show the form'}
                   </p>
+                )}
+                </>
                 )}
               </div>
             </DialogContent>
