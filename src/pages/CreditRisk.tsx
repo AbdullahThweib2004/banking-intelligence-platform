@@ -139,7 +139,15 @@ interface BankCustomerRow {
   employment_type: string;
   loan_amount: number;
   loan_purpose: string;
+  loan_restricted?: boolean;
+  restriction_reason?: string | null;
 }
+
+const LOAN_RESTRICTED_MESSAGE =
+  'This client cannot apply for a loan because they are restricted from this feature. Please contact your branch manager for details.';
+
+const LOAN_RESTRICTED_MESSAGE_AR =
+  'لا يمكن لهذا العميل التقدم بطلب قرض لأنه مقيد من هذه الميزة. يرجى التواصل مع مدير الفرع للتفاصيل.';
 
 const EMPTY_ASSESSMENT_FORM = {
   customerName: '',
@@ -256,12 +264,14 @@ export const CreditRisk: React.FC = () => {
   // New assessment form state
   const [accountNumber, setAccountNumber] = useState('');
   const [customerLoaded, setCustomerLoaded] = useState(false);
+  const [customerLoanRestricted, setCustomerLoanRestricted] = useState(false);
   const [loadCustomerLoading, setLoadCustomerLoading] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
 
   const resetAssessmentForm = () => {
     setAccountNumber('');
     setCustomerLoaded(false);
+    setCustomerLoanRestricted(false);
     setLoadCustomerLoading(false);
     setFormData({ ...EMPTY_ASSESSMENT_FORM });
   };
@@ -283,6 +293,7 @@ export const CreditRisk: React.FC = () => {
 
     setLoadCustomerLoading(true);
     setCustomerLoaded(false);
+    setCustomerLoanRestricted(false);
 
     const { data, error } = await supabase
       .from('bank_customers')
@@ -313,6 +324,8 @@ export const CreditRisk: React.FC = () => {
     }
 
     const row = data as BankCustomerRow;
+    const isRestricted = Boolean(row.loan_restricted);
+
     setFormData({
       customerName: row.customer_name,
       nationalId: row.national_id,
@@ -320,10 +333,17 @@ export const CreditRisk: React.FC = () => {
       monthlyExpenses: String(row.monthly_expenses),
       existingLoans: String(row.existing_loans),
       employmentType: row.employment_type,
-      loanAmount: String(row.loan_amount),
+      loanAmount: '',
       loanPurpose: row.loan_purpose,
     });
+    setCustomerLoanRestricted(isRestricted);
     setCustomerLoaded(true);
+
+    if (isRestricted) {
+      toast.error(language === 'ar' ? LOAN_RESTRICTED_MESSAGE_AR : LOAN_RESTRICTED_MESSAGE);
+      return;
+    }
+
     toast.success(
       language === 'ar'
         ? `تم تحميل بيانات ${row.customer_name}`
@@ -338,6 +358,11 @@ export const CreditRisk: React.FC = () => {
           ? 'حمّل بيانات العميل برقم الحساب أولاً'
           : 'Load the customer by account number first'
       );
+      return;
+    }
+
+    if (customerLoanRestricted) {
+      toast.error(language === 'ar' ? LOAN_RESTRICTED_MESSAGE_AR : LOAN_RESTRICTED_MESSAGE);
       return;
     }
 
@@ -585,6 +610,7 @@ export const CreditRisk: React.FC = () => {
                       onChange={(e) => {
                         setAccountNumber(e.target.value);
                         setCustomerLoaded(false);
+                        setCustomerLoanRestricted(false);
                       }}
                       placeholder={language === 'ar' ? 'مثال: BOP-100001' : 'e.g. BOP-100001'}
                     />
@@ -600,13 +626,24 @@ export const CreditRisk: React.FC = () => {
                       {language === 'ar' ? 'تحميل العميل' : 'Load Customer'}
                     </Button>
                   </div>
-                  {customerLoaded && (
+                  {customerLoaded && !customerLoanRestricted && (
                     <p className="text-xs text-success flex items-center gap-1">
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       {language === 'ar'
                         ? 'تم تحميل بيانات العميل — يمكنك تعديل الحقول قبل التقييم'
                         : 'Customer loaded — you may edit fields before assessing'}
                     </p>
+                  )}
+                  {customerLoaded && customerLoanRestricted && (
+                    <div
+                      className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive flex gap-2"
+                      role="alert"
+                    >
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>
+                        {language === 'ar' ? LOAN_RESTRICTED_MESSAGE_AR : LOAN_RESTRICTED_MESSAGE}
+                      </span>
+                    </div>
                   )}
                 </div>
 
@@ -621,6 +658,7 @@ export const CreditRisk: React.FC = () => {
                         value={formData.customerName}
                         onChange={(e) => handleInputChange('customerName', e.target.value)}
                         placeholder={language === 'ar' ? 'أدخل الاسم' : 'Enter name'}
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                     <div className="space-y-2">
@@ -629,6 +667,7 @@ export const CreditRisk: React.FC = () => {
                         value={formData.nationalId}
                         onChange={(e) => handleInputChange('nationalId', e.target.value)}
                         placeholder="XXXXXXXXXXX"
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                   </div>
@@ -644,6 +683,7 @@ export const CreditRisk: React.FC = () => {
                         value={formData.monthlyIncome}
                         onChange={(e) => handleInputChange('monthlyIncome', e.target.value)}
                         placeholder="0.00"
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                     <div className="space-y-2">
@@ -653,6 +693,7 @@ export const CreditRisk: React.FC = () => {
                         value={formData.monthlyExpenses}
                         onChange={(e) => handleInputChange('monthlyExpenses', e.target.value)}
                         placeholder="0.00"
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                     <div className="space-y-2">
@@ -662,6 +703,7 @@ export const CreditRisk: React.FC = () => {
                         value={formData.existingLoans}
                         onChange={(e) => handleInputChange('existingLoans', e.target.value)}
                         placeholder="0.00"
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                     <div className="space-y-2">
@@ -669,8 +711,9 @@ export const CreditRisk: React.FC = () => {
                       <Select
                         value={formData.employmentType}
                         onValueChange={(v) => handleInputChange('employmentType', v)}
+                        disabled={customerLoanRestricted}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger disabled={customerLoanRestricted}>
                           <SelectValue placeholder={language === 'ar' ? 'اختر' : 'Select'} />
                         </SelectTrigger>
                         <SelectContent>
@@ -698,7 +741,8 @@ export const CreditRisk: React.FC = () => {
                         type="number"
                         value={formData.loanAmount}
                         onChange={(e) => handleInputChange('loanAmount', e.target.value)}
-                        placeholder="0.00"
+                        placeholder={language === 'ar' ? 'أدخل المبلغ يدوياً' : 'Enter amount manually'}
+                        disabled={customerLoanRestricted}
                       />
                     </div>
                     <div className="space-y-2">
@@ -706,8 +750,9 @@ export const CreditRisk: React.FC = () => {
                       <Select
                         value={formData.loanPurpose}
                         onValueChange={(v) => handleInputChange('loanPurpose', v)}
+                        disabled={customerLoanRestricted}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger disabled={customerLoanRestricted}>
                           <SelectValue placeholder={language === 'ar' ? 'اختر' : 'Select'} />
                         </SelectTrigger>
                         <SelectContent>
@@ -733,7 +778,11 @@ export const CreditRisk: React.FC = () => {
                   <Button variant="outline" onClick={() => setIsNewAssessmentOpen(false)}>
                     {t('common.cancel')}
                   </Button>
-                  <Button onClick={handleSubmitAssessment} className="gradient-bg">
+                  <Button
+                    onClick={handleSubmitAssessment}
+                    className="gradient-bg"
+                    disabled={customerLoanRestricted}
+                  >
                     {language === 'ar' ? 'تقييم المخاطر' : 'Assess Risk'}
                   </Button>
                 </div>
