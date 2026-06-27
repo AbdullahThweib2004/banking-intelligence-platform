@@ -236,7 +236,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               {t('dashboard.welcome')}, {user?.email?.split('@')[0] || 'User'}
             </h1>
           </div>
-          
+          {/* User Menu */}
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
