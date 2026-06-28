@@ -232,7 +232,6 @@ export const Dashboard: React.FC = () => {
                       <CheckSquare className="h-4 w-4 text-warning" />
                     </div>
                     <span>{t('nav.approvals')}</span>
-                    <Badge className="ml-auto bg-destructive/10 text-destructive">5</Badge>
                   </Button>
                 </Link>
               )}
