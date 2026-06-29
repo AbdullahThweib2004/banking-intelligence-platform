@@ -224,7 +224,7 @@ export const Dashboard: React.FC = () => {
                   <span>{t('nav.aiAssistant')}</span>
                 </Button>
               </Link>
-              
+              {/*Approvals button is only visible to managers and risk department */}
               {canAccess('/approvals') && (
                 <Link to="/approvals">
                   <Button variant="outline" className="w-full justify-start gap-3 h-12">
