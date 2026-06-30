@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
+import { isScoringField, reanalyzeApplicationAfterModification } from '@/lib/modificationReanalysis';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -81,6 +83,7 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
   embedded = false,
 }) => {
   const { t, language } = useLanguage();
+  const { user, profile, role } = useAuth();
   const [requests, setRequests] = useState<ModRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -90,6 +93,7 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
   const [decision, setDecision] = useState<'approve' | 'reject' | 'view' | null>(null);
   const [reviewNote, setReviewNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   const fetchRequests = useCallback(async () => {
     const { data, error } = await supabase
@@ -144,15 +148,19 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
 
   const confirmReview = async () => {
     if (!selected || !decision || decision === 'view') return;
+    const isApprove = decision === 'approve';
+    // Capture before we clear `selected` in the async flow below.
+    const reviewed = selected;
+
     setSubmitting(true);
     const { error } = await supabase.rpc('review_loan_modification_request', {
-      request_id: selected.id,
-      approve: decision === 'approve',
+      request_id: reviewed.id,
+      approve: isApprove,
       review_note: reviewNote.trim() || null,
     });
-    setSubmitting(false);
 
     if (error) {
+      setSubmitting(false);
       console.error('Review failed:', error);
       toast.error(
         language === 'ar' ? `فشل المراجعة: ${error.message}` : `Review failed: ${error.message}`
@@ -161,7 +169,7 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
     }
 
     toast.success(
-      decision === 'approve'
+      isApprove
         ? language === 'ar'
           ? 'تمت الموافقة وتطبيق التعديل'
           : 'Approved and applied to the application'
@@ -172,6 +180,44 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
     setSelected(null);
     setDecision(null);
     setReviewNote('');
+
+    // Re-analysis: only when an approval changed a scoring-related field.
+    // Rejected requests and non-scoring fields keep the existing score.
+    if (isApprove && isScoringField(reviewed.field_name)) {
+      setReanalyzing(true);
+      const loadingId = toast.loading(
+        language === 'ar'
+          ? 'إعادة تحليل المخاطر بالقيم المحدّثة...'
+          : 'Re-analyzing risk with the updated values...'
+      );
+      const result = await reanalyzeApplicationAfterModification({
+        applicationId: reviewed.application_id,
+        modifiedField: reviewed.field_name,
+        actor: {
+          id: user?.id ?? null,
+          name: profile?.full_name ?? user?.email ?? null,
+          role: role ?? null,
+        },
+      });
+      toast.dismiss(loadingId);
+
+      if (result.status === 'completed') {
+        toast.success(
+          language === 'ar'
+            ? `تم إعادة احتساب المخاطر: ${result.oldScore ?? '—'} ← ${result.newScore} (${result.newCategory})`
+            : `Risk recalculated: ${result.oldScore ?? '—'} → ${result.newScore} (${result.newCategory})`
+        );
+      } else if (result.status === 'failed') {
+        toast.error(
+          language === 'ar'
+            ? 'فشل إعادة تحليل المخاطر. تم وضع علامة "بحاجة لإعادة تحليل" على الطلب.'
+            : 'Risk re-analysis failed. The application is flagged as "needs re-analysis".'
+        );
+      }
+      setReanalyzing(false);
+    }
+
+    setSubmitting(false);
     fetchRequests();
   };
 
@@ -315,6 +361,7 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
                             variant="outline"
                             className="text-success border-success/30 hover:bg-success/10"
                             onClick={() => openReview(req, 'approve')}
+                            disabled={submitting || reanalyzing}
                           >
                             <Check className="h-4 w-4" />
                           </Button>
@@ -323,6 +370,7 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
                             variant="outline"
                             className="text-destructive border-destructive/30 hover:bg-destructive/10"
                             onClick={() => openReview(req, 'reject')}
+                            disabled={submitting || reanalyzing}
                           >
                             <X className="h-4 w-4" />
                           </Button>

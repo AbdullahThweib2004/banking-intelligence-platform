@@ -65,6 +65,7 @@ interface ApprovalRequest {
   notes?: string;
   priority: 'normal' | 'high' | 'urgent';
   savedRiskExplanation: SavedRiskExplanation | null;
+  reanalysisStatus?: 'pending' | 'completed' | 'failed' | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table.
@@ -89,6 +90,7 @@ interface ApprovalRow {
   recommended_action?: RecommendedAction | null;
   result_source?: ResultSource | null;
   assessed_at?: string | null;
+  reanalysis_status?: 'pending' | 'completed' | 'failed' | null;
 }
 
 // Parse the saved risk explanation snapshot from a row without recalculating.
@@ -124,6 +126,7 @@ const mapRow = (
   notes: row.notes ?? undefined,
   priority: row.priority ?? 'normal',
   savedRiskExplanation: parseSavedRiskExplanation(row),
+  reanalysisStatus: row.reanalysis_status ?? null,
 });
 
 const getRiskColor = (category?: ApprovalRequest['riskCategory']) => {
@@ -432,7 +435,11 @@ export const Approvals: React.FC = () => {
                       {approval.amount ? `₪${approval.amount.toLocaleString()}` : '—'}
                     </TableCell>
                     <TableCell>
-                      {approval.riskScore ? (
+                      {approval.reanalysisStatus === 'failed' ? (
+                        <Badge className="bg-destructive/10 text-destructive border-destructive/20">
+                          {language === 'ar' ? 'بحاجة لإعادة تحليل' : 'Needs re-analysis'}
+                        </Badge>
+                      ) : approval.riskScore ? (
                         <div className="flex items-center gap-2">
                           <Progress 
                             value={approval.riskScore} 
