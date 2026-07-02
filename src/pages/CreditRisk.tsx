@@ -45,8 +45,6 @@ import {
   XCircle,
   Plus,
   Search,
-  Filter,
-  Download,
   Eye,
   Info,
   Pencil,
@@ -1116,12 +1114,6 @@ export const CreditRisk: React.FC = () => {
                     className="pl-9 w-64"
                   />
                 </div>
-                <Button variant="outline" size="icon">
-                  <Filter className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="icon">
-                  <Download className="h-4 w-4" />
-                </Button>
               </div>
             </div>
           </CardHeader>
