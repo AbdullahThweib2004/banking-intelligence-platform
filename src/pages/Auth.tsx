@@ -82,7 +82,7 @@ export const Auth: React.FC = () => {
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAzMHYySDI0di0yaDEyem0wLTR2Mkg0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-30" />
         
         <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
-          <BoPLogo className="w-24 h-24 rounded-2xl mb-8" />
+          <BoPLogo variant="white" className="w-24 h-24 mb-8" />
           
           <h1 className="text-4xl font-bold text-white mb-4 text-center">
             {language === 'ar' ? 'بنك فلسطين' : 'Bank of Palestine'}
@@ -132,7 +132,7 @@ export const Auth: React.FC = () => {
         <div className="w-full max-w-md">
           {/* Mobile Logo */}
           <div className="lg:hidden flex flex-col items-center mb-8">
-            <BoPLogo className="w-16 h-16 rounded-xl mb-4" />
+            <BoPLogo className="w-16 h-16 mb-4" />
             <h1 className="text-2xl font-bold gradient-text">
               {language === 'ar' ? 'بنك فلسطين' : 'Bank of Palestine'}
             </h1>

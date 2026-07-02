@@ -97,7 +97,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         <div className="flex items-center justify-between h-16 px-4 border-b border-sidebar-border/30">
           {sidebarOpen && (
             <div className="flex items-center gap-3">
-              <BoPLogo className="w-10 h-10 rounded-lg" />
+              <BoPLogo variant="white" className="w-10 h-10" />
               <div className="flex flex-col">
                 <span className="text-sidebar-foreground font-semibold text-sm">
                   {language === 'ar' ? 'بنك فلسطين' : 'Bank of Palestine'}
@@ -173,7 +173,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
         "lg:hidden fixed top-0 left-0 right-0 h-16 sidebar-gradient z-50 flex items-center justify-between px-4"
       )}>
         <div className="flex items-center gap-3">
-          <BoPLogo className="w-8 h-8 rounded-md" />
+          <BoPLogo variant="white" className="w-8 h-8" />
           <span className="text-sidebar-foreground font-semibold">
             {language === 'ar' ? 'بنك فلسطين' : 'Bank of Palestine'}
           </span>
