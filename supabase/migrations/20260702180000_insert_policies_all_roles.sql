@@ -13,7 +13,7 @@
 -- Idempotent (each policy is dropped before being recreated).
 -- ============================================================================
 
--- 1. approval_requests -------------------------------------------------------
+-- 1. approval Requests -------------------------------------------------------
 ALTER TABLE public.approval_requests ENABLE ROW LEVEL SECURITY;
 
 -- Replace the employee-only INSERT policy with one covering all three roles.
