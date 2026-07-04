@@ -43,15 +43,12 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { extractId, extractFields, openNewAccount } from '@/lib/accountApi';
+import { useAuth } from '@/contexts/AuthContext';
+import { canOpenAccount } from '@/lib/roles';
+import { supabase } from '@/integrations/supabase/client';
 
 interface Document {
   id: string;
@@ -189,19 +186,43 @@ const branchTasks: BranchTask[] = [
 
 export const Documents: React.FC = () => {
   const { t, language, direction } = useLanguage();
+  const { user, role, profile, session } = useAuth();
   const StartArrow = direction === 'rtl' ? ArrowLeft : ArrowRight;
+
+  const allowAccountOpening = canOpenAccount(role);
+  const authz = { accessToken: session?.access_token ?? null, role };
+
+  // Best-effort audit trail (RLS lets users insert their own rows).
+  const writeAccountAudit = async (
+    action: string,
+    resourceId: string,
+    details: string
+  ) => {
+    if (!user?.id) return;
+    const { error } = await supabase.from('audit_logs').insert({
+      user_id: user.id,
+      user_name: profile?.full_name ?? null,
+      user_role: role ?? null,
+      action,
+      resource: 'account_opening',
+      resource_id: resourceId,
+      details,
+      severity: 'info',
+    });
+    if (error) console.warn('Audit log insert skipped:', error.message);
+  };
   const [documents, setDocuments] = useState<Document[]>(mockDocuments);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
 
   const emptyAccountForm = {
-    fullName: '',
-    nationalId: '',
-    phone: '',
-    email: '',
-    accountType: 'savings',
-    initialDeposit: '',
+    firstName: '',
+    lastName: '',
+    dateOfBirth: '',
+    fatherName: '',
+    motherName: '',
+    idNumber: '',
   };
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountForm, setAccountForm] = useState(emptyAccountForm);
@@ -210,12 +231,21 @@ export const Documents: React.FC = () => {
   const [idDragging, setIdDragging] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [autoFilledFields, setAutoFilledFields] = useState<string[]>([]);
+  const [extractionConfidence, setExtractionConfidence] = useState(0);
+  const [accountSubmitted, setAccountSubmitted] = useState(false);
+  const [referenceId, setReferenceId] = useState('');
+  const [documentId, setDocumentId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleAccountFieldChange = (
     field: keyof typeof emptyAccountForm,
     value: string
   ) => {
     setAccountForm((prev) => ({ ...prev, [field]: value }));
+    // Once the user edits an auto-filled field, it's no longer auto-filled.
+    setAutoFilledFields((prev) => prev.filter((f) => f !== field));
   };
 
   const resetAccountWizard = () => {
@@ -224,10 +254,18 @@ export const Documents: React.FC = () => {
     setIdDragging(false);
     setExtracting(false);
     setExtractError(null);
+    setAutoFilledFields([]);
+    setExtractionConfidence(0);
+    setAccountSubmitted(false);
+    setReferenceId('');
+    setDocumentId('');
+    setSubmitting(false);
+    setSubmitError(null);
     setAccountForm(emptyAccountForm);
   };
 
-  const openNewAccount = () => {
+  const openAccountWizard = () => {
+    if (!allowAccountOpening) return;
     resetAccountWizard();
     setAccountModalOpen(true);
   };
@@ -276,52 +314,191 @@ export const Documents: React.FC = () => {
     handleIdFiles(e.target.files ? Array.from(e.target.files) : []);
   };
 
-  const handleExtractData = () => {
+  const handleExtractData = async () => {
     if (!idFile || extracting) return;
     setExtractError(null);
     setExtracting(true);
 
-    // Simulated OCR/extraction. Files whose name hints at a poor scan
-    // (e.g. "blur", "unclear", "fail") demonstrate the failure path.
-    const willFail = /blur|unclear|fail/i.test(idFile.name);
+    try {
+      // Step 1: upload the ID image.
+      const { document_id } = await extractId(idFile, authz);
+      setDocumentId(document_id);
+      await writeAccountAudit(
+        'account_opening_upload',
+        document_id,
+        `Uploaded ID document: ${idFile.name}`
+      );
 
-    window.setTimeout(() => {
-      setExtracting(false);
-      if (willFail) {
-        setExtractError(
-          language === 'ar'
+      // Step 2: extract the fields for that document.
+      const data = await extractFields(document_id, authz);
+      const src = data.fields ?? data;
+
+      const mapped = {
+        firstName: src.first_name ?? '',
+        lastName: src.last_name ?? '',
+        dateOfBirth: src.date_of_birth ?? '',
+        fatherName: src.father_name ?? '',
+        motherName: src.mother_name ?? '',
+        idNumber: src.id_number ?? '',
+      };
+      setAccountForm(mapped);
+      const filledFields = Object.entries(mapped)
+        .filter(([, value]) => value.trim() !== '')
+        .map(([key]) => key);
+      setAutoFilledFields(filledFields);
+
+      const rawConfidence = data.confidence ?? src.confidence;
+      const confidence =
+        typeof rawConfidence === 'number'
+          ? Math.round(rawConfidence <= 1 ? rawConfidence * 100 : rawConfidence)
+          : 0;
+      setExtractionConfidence(confidence);
+
+      await writeAccountAudit(
+        'account_opening_extract',
+        document_id,
+        `Extracted ${filledFields.length} fields (confidence ${confidence}%)`
+      );
+
+      setAccountStep(2);
+    } catch (err) {
+      setExtractError(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
             ? 'تعذّر قراءة الهوية بوضوح. يرجى رفع صورة أوضح.'
             : 'Could not read the ID clearly. Please upload a clearer photo.'
-        );
-        return;
-      }
-      // Prefill the review step with the extracted details.
-      setAccountForm((prev) => ({
-        ...prev,
-        fullName: prev.fullName || 'Ahmad Khalil',
-        nationalId: prev.nationalId || '400123456',
-      }));
-      setAccountStep(2);
-    }, 2000);
+      );
+    } finally {
+      setExtracting(false);
+    }
   };
+
+  const isReviewValid =
+    accountForm.firstName.trim() !== '' &&
+    accountForm.lastName.trim() !== '' &&
+    accountForm.dateOfBirth.trim() !== '' &&
+    accountForm.idNumber.trim() !== '';
+
+  const customerFullName = `${accountForm.firstName} ${accountForm.lastName}`.trim();
+
+  const autoFilledBadge = (field: string) =>
+    autoFilledFields.includes(field) ? (
+      <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
+        <ScanLine className="h-3 w-3" />
+        {language === 'ar' ? 'مُعبّأ تلقائيًا' : 'Auto-filled'}
+      </Badge>
+    ) : null;
 
   const goToCompleteStep = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accountForm.fullName.trim() || !accountForm.nationalId.trim()) {
+    if (!isReviewValid) {
       toast.error(
         language === 'ar'
-          ? 'يرجى إدخال الاسم الكامل ورقم الهوية'
-          : 'Please enter the full name and national ID'
+          ? 'يرجى تعبئة جميع الحقول المطلوبة'
+          : 'Please complete all required fields'
       );
       return;
     }
     setAccountStep(3);
-    toast.success(
-      language === 'ar'
-        ? `تم بدء طلب فتح حساب لـ ${accountForm.fullName}`
-        : `New account request started for ${accountForm.fullName}`
-    );
   };
+
+  const handleCompleteProcess = async () => {
+    if (submitting) return;
+    setSubmitError(null);
+    setSubmitting(true);
+
+    const confirmedFieldCount = [
+      accountForm.firstName,
+      accountForm.lastName,
+      accountForm.dateOfBirth,
+      accountForm.idNumber,
+      accountForm.fatherName,
+      accountForm.motherName,
+    ].filter((v) => v.trim() !== '').length;
+
+    const baseName =
+      (customerFullName || accountForm.idNumber || 'new_customer')
+        .trim()
+        .replace(/\s+/g, '_');
+
+    try {
+      // Step 4: submit the confirmed fields with the document id.
+      const result = await openNewAccount(
+        {
+          document_id: documentId,
+          first_name: accountForm.firstName.trim(),
+          last_name: accountForm.lastName.trim(),
+          date_of_birth: accountForm.dateOfBirth.trim(),
+          father_name: accountForm.fatherName.trim(),
+          mother_name: accountForm.motherName.trim(),
+          id_number: accountForm.idNumber.trim(),
+        },
+        authz
+      );
+
+      // Step 5: insert the resulting record into the Documents table. The
+      // Total/Completed KPI counters derive from `documents`, so they update
+      // automatically.
+      const newDoc: Document = {
+        id: result.document_id ?? result.id ?? documentId ?? `DOC-${Date.now()}`,
+        name: result.file_name ?? `${baseName}_account_opening.pdf`,
+        type: 'pdf',
+        uploadDate: new Date().toISOString().split('T')[0],
+        status: 'completed',
+        extractedFields:
+          typeof result.extracted_fields === 'number'
+            ? result.extracted_fields
+            : confirmedFieldCount,
+        confidence:
+          typeof result.confidence === 'number'
+            ? result.confidence
+            : extractionConfidence || undefined,
+        size: idFile ? `${(idFile.size / 1024 / 1024).toFixed(1)} MB` : '—',
+      };
+      setDocuments((prev) => [newDoc, ...prev]);
+
+      const ref =
+        result.reference_id ??
+        result.id ??
+        `ACC-${new Date().getFullYear()}-${Math.floor(
+          100000 + Math.random() * 900000
+        )}`;
+      setReferenceId(ref);
+      setAccountSubmitted(true);
+
+      await writeAccountAudit(
+        'account_opening_complete',
+        ref,
+        `Account opening submitted (${ref}) for ${customerFullName || accountForm.idNumber}`
+      );
+
+      toast.success(
+        language === 'ar'
+          ? 'تم إرسال طلب فتح الحساب'
+          : 'Account opening request submitted'
+      );
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر إتمام العملية. حاول مرة أخرى.'
+            : 'Could not complete the process. Please try again.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const summaryRows = [
+    { label: language === 'ar' ? 'الاسم الأول' : 'First Name', value: accountForm.firstName },
+    { label: language === 'ar' ? 'اسم العائلة' : 'Last Name', value: accountForm.lastName },
+    { label: language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth', value: accountForm.dateOfBirth },
+    { label: language === 'ar' ? 'رقم الهوية' : 'ID Number', value: accountForm.idNumber },
+    { label: language === 'ar' ? 'اسم الأب' : "Father's Name", value: accountForm.fatherName },
+    { label: language === 'ar' ? 'اسم الأم' : "Mother's Name", value: accountForm.motherName },
+  ];
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -410,11 +587,13 @@ export const Documents: React.FC = () => {
 
         {/* Branch task selection grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {branchTasks.map((task) => {
+          {branchTasks
+            .filter((task) => task.id !== 'open-account' || allowAccountOpening)
+            .map((task) => {
             const Icon = task.icon;
             const handleClick = () => {
               if (!task.available) return;
-              if (task.id === 'open-account') openNewAccount();
+              if (task.id === 'open-account') openAccountWizard();
             };
 
             return (
@@ -632,113 +811,177 @@ export const Documents: React.FC = () => {
 
               {/* Step 2: Review Data */}
               {accountStep === 2 && (
-                <form
-                  id="review-account-form"
-                  onSubmit={goToCompleteStep}
-                  className="grid grid-cols-1 sm:grid-cols-2 gap-4"
-                >
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-full-name">
-                      {language === 'ar' ? 'الاسم الكامل' : 'Full Name'}
-                    </Label>
-                    <Input
-                      id="acc-full-name"
-                      value={accountForm.fullName}
-                      onChange={(e) => handleAccountFieldChange('fullName', e.target.value)}
-                      placeholder={language === 'ar' ? 'اسم العميل' : 'Customer name'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-national-id">
-                      {language === 'ar' ? 'رقم الهوية' : 'National ID'}
-                    </Label>
-                    <Input
-                      id="acc-national-id"
-                      value={accountForm.nationalId}
-                      onChange={(e) => handleAccountFieldChange('nationalId', e.target.value)}
-                      placeholder={language === 'ar' ? 'رقم الهوية' : 'ID number'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-phone">
-                      {language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}
-                    </Label>
-                    <Input
-                      id="acc-phone"
-                      type="tel"
-                      value={accountForm.phone}
-                      onChange={(e) => handleAccountFieldChange('phone', e.target.value)}
-                      placeholder={language === 'ar' ? 'رقم الهاتف' : 'Phone'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-email">
-                      {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
-                    </Label>
-                    <Input
-                      id="acc-email"
-                      type="email"
-                      value={accountForm.email}
-                      onChange={(e) => handleAccountFieldChange('email', e.target.value)}
-                      placeholder={language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-type">
-                      {language === 'ar' ? 'نوع الحساب' : 'Account Type'}
-                    </Label>
-                    <Select
-                      value={accountForm.accountType}
-                      onValueChange={(value) => handleAccountFieldChange('accountType', value)}
-                    >
-                      <SelectTrigger id="acc-type">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="savings">
-                          {language === 'ar' ? 'حساب توفير' : 'Savings'}
-                        </SelectItem>
-                        <SelectItem value="current">
-                          {language === 'ar' ? 'حساب جاري' : 'Current'}
-                        </SelectItem>
-                        <SelectItem value="business">
-                          {language === 'ar' ? 'حساب تجاري' : 'Business'}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="acc-deposit">
-                      {language === 'ar' ? 'الإيداع المبدئي' : 'Initial Deposit'}
-                    </Label>
-                    <Input
-                      id="acc-deposit"
-                      type="number"
-                      min="0"
-                      value={accountForm.initialDeposit}
-                      onChange={(e) => handleAccountFieldChange('initialDeposit', e.target.value)}
-                      placeholder="0"
-                    />
-                  </div>
-                </form>
+                <div className="space-y-4">
+                  {extractionConfidence > 0 && (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                      <span className="text-sm text-muted-foreground">
+                        {language === 'ar' ? 'دقة الاستخراج' : 'Extraction confidence'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Progress
+                          value={extractionConfidence}
+                          className={cn(
+                            'w-24 h-2',
+                            extractionConfidence >= 90 && '[&>div]:bg-success',
+                            extractionConfidence >= 70 &&
+                              extractionConfidence < 90 &&
+                              '[&>div]:bg-warning',
+                            extractionConfidence < 70 && '[&>div]:bg-destructive'
+                          )}
+                        />
+                        <span className="text-sm font-medium">{extractionConfidence}%</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <form
+                    id="review-account-form"
+                    onSubmit={goToCompleteStep}
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-first-name">
+                          {language === 'ar' ? 'الاسم الأول' : 'First Name'}
+                        </Label>
+                        {autoFilledBadge('firstName')}
+                      </div>
+                      <Input
+                        id="rev-first-name"
+                        value={accountForm.firstName}
+                        onChange={(e) => handleAccountFieldChange('firstName', e.target.value)}
+                        placeholder={language === 'ar' ? 'الاسم الأول' : 'First name'}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-last-name">
+                          {language === 'ar' ? 'اسم العائلة' : 'Last Name'}
+                        </Label>
+                        {autoFilledBadge('lastName')}
+                      </div>
+                      <Input
+                        id="rev-last-name"
+                        value={accountForm.lastName}
+                        onChange={(e) => handleAccountFieldChange('lastName', e.target.value)}
+                        placeholder={language === 'ar' ? 'اسم العائلة' : 'Last name'}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-dob">
+                          {language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth'}
+                        </Label>
+                        {autoFilledBadge('dateOfBirth')}
+                      </div>
+                      <Input
+                        id="rev-dob"
+                        type="date"
+                        value={accountForm.dateOfBirth}
+                        onChange={(e) => handleAccountFieldChange('dateOfBirth', e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-id-number">
+                          {language === 'ar' ? 'رقم الهوية' : 'ID Number'}
+                        </Label>
+                        {autoFilledBadge('idNumber')}
+                      </div>
+                      <Input
+                        id="rev-id-number"
+                        value={accountForm.idNumber}
+                        onChange={(e) => handleAccountFieldChange('idNumber', e.target.value)}
+                        placeholder={language === 'ar' ? 'رقم الهوية' : 'ID number'}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-father-name">
+                          {language === 'ar' ? 'اسم الأب' : "Father's Name"}
+                        </Label>
+                        {autoFilledBadge('fatherName')}
+                      </div>
+                      <Input
+                        id="rev-father-name"
+                        value={accountForm.fatherName}
+                        onChange={(e) => handleAccountFieldChange('fatherName', e.target.value)}
+                        placeholder={language === 'ar' ? 'اسم الأب' : "Father's name"}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+                        <Label htmlFor="rev-mother-name">
+                          {language === 'ar' ? 'اسم الأم' : "Mother's Name"}
+                        </Label>
+                        {autoFilledBadge('motherName')}
+                      </div>
+                      <Input
+                        id="rev-mother-name"
+                        value={accountForm.motherName}
+                        onChange={(e) => handleAccountFieldChange('motherName', e.target.value)}
+                        placeholder={language === 'ar' ? 'اسم الأم' : "Mother's name"}
+                      />
+                    </div>
+                  </form>
+                </div>
               )}
 
               {/* Step 3: Complete */}
-              {accountStep === 3 && (
-                <div className="flex flex-col items-center text-center gap-4 py-6">
-                  <div className="p-4 rounded-full bg-success/10">
-                    <CheckCircle2 className="h-12 w-12 text-success" />
+              {accountStep === 3 &&
+                (accountSubmitted ? (
+                  <div className="flex flex-col items-center text-center gap-4 py-4">
+                    <div className="p-4 rounded-full bg-success/10">
+                      <CheckCircle2 className="h-12 w-12 text-success" />
+                    </div>
+                    <h3 className="text-lg font-semibold">
+                      {language === 'ar'
+                        ? 'تم إرسال طلب فتح الحساب'
+                        : 'Account opening request submitted'}
+                    </h3>
+                    <div className="w-full rounded-lg border border-border bg-muted/40 p-4">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        {language === 'ar' ? 'الرقم المرجعي للطلب' : 'Reference / Document ID'}
+                      </p>
+                      <p className="text-lg font-semibold tracking-wide text-primary">
+                        {referenceId}
+                      </p>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-semibold">
-                    {language === 'ar' ? 'اكتمل الطلب' : 'All Done'}
-                  </h3>
-                  <p className="text-muted-foreground max-w-sm">
-                    {language === 'ar'
-                      ? `تم بدء طلب فتح حساب جديد${accountForm.fullName ? ` لـ ${accountForm.fullName}` : ''}.`
-                      : `The new account request${accountForm.fullName ? ` for ${accountForm.fullName}` : ''} has been started.`}
-                  </p>
-                </div>
-              )}
+                ) : (
+                  <div className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar'
+                        ? 'يرجى مراجعة البيانات المؤكدة قبل إتمام العملية'
+                        : 'Please review the confirmed details before completing the process'}
+                    </p>
+                    <div className="rounded-lg border border-border divide-y divide-border">
+                      {summaryRows.map((row) => (
+                        <div
+                          key={row.label}
+                          className="flex items-center justify-between gap-4 px-4 py-2.5"
+                        >
+                          <span className="text-sm text-muted-foreground">{row.label}</span>
+                          <span className="text-sm font-medium text-foreground text-end break-all">
+                            {row.value || '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {submitError && (
+                      <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                        <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-destructive">{submitError}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
 
               {/* Footer actions */}
               <div className="flex items-center justify-between gap-2 pt-2">
@@ -750,6 +993,15 @@ export const Documents: React.FC = () => {
                     disabled={extracting}
                   >
                     {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                  </Button>
+                ) : accountStep === 3 && !accountSubmitted ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setAccountStep(2)}
+                    disabled={submitting}
+                  >
+                    {language === 'ar' ? 'رجوع' : 'Back'}
                   </Button>
                 ) : (
                   <span />
@@ -782,14 +1034,39 @@ export const Documents: React.FC = () => {
                     </Button>
                   )}
                   {accountStep === 2 && (
-                    <Button type="submit" form="review-account-form" className="gradient-bg gap-2">
-                      {language === 'ar' ? 'التالي' : 'Next'}
+                    <Button
+                      type="submit"
+                      form="review-account-form"
+                      className="gradient-bg gap-2"
+                      disabled={!isReviewValid}
+                    >
+                      {language === 'ar' ? 'متابعة' : 'Continue'}
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 3 && (
+                  {accountStep === 3 && !accountSubmitted && (
+                    <Button
+                      type="button"
+                      className="gradient-bg gap-2"
+                      onClick={handleCompleteProcess}
+                      disabled={submitting}
+                    >
+                      {submitting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {language === 'ar' ? 'جارٍ المعالجة...' : 'Processing...'}
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-4 w-4" />
+                          {language === 'ar' ? 'إتمام العملية' : 'Complete Process'}
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {accountStep === 3 && accountSubmitted && (
                     <Button type="button" className="gradient-bg" onClick={closeAccountModal}>
-                      {language === 'ar' ? 'تم' : 'Done'}
+                      {language === 'ar' ? 'إغلاق' : 'Close'}
                     </Button>
                   )}
                 </div>

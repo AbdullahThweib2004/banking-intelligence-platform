@@ -22,3 +22,11 @@ export function canAccess(role: Role | null, path: string): boolean {
   if (!role) return false;
   return (ROUTE_PERMISSIONS[path] ?? []).includes(role);
 }
+
+// Roles allowed to use the "Open New Account" flow on the Documents page
+// (task card, modal, and the /documents/extract-id + /accounts/open-new calls).
+export const ACCOUNT_OPENING_ROLES: Role[] = ['branch_employee', 'branch_manager'];
+
+export function canOpenAccount(role: Role | null): boolean {
+  return role != null && ACCOUNT_OPENING_ROLES.includes(role);
+}
