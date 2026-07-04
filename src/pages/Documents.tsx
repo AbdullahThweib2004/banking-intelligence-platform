@@ -39,6 +39,7 @@ import {
   UserX,
   ArrowRight,
   ArrowLeft,
+  ScanLine,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -188,10 +189,6 @@ const branchTasks: BranchTask[] = [
 
 export const Documents: React.FC = () => {
   const { t, language, direction } = useLanguage();
-  // Legacy Documents content (KPI cards, upload area, table) is kept in the
-  // component but not rendered for now — the page currently surfaces the
-  // Branch Tasks selection grid instead.
-  const showLegacyDocuments = false;
   const StartArrow = direction === 'rtl' ? ArrowLeft : ArrowRight;
   const [documents, setDocuments] = useState<Document[]>(mockDocuments);
   const [isDragging, setIsDragging] = useState(false);
@@ -208,6 +205,11 @@ export const Documents: React.FC = () => {
   };
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountForm, setAccountForm] = useState(emptyAccountForm);
+  const [accountStep, setAccountStep] = useState(1);
+  const [idFile, setIdFile] = useState<File | null>(null);
+  const [idDragging, setIdDragging] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   const handleAccountFieldChange = (
     field: keyof typeof emptyAccountForm,
@@ -216,7 +218,94 @@ export const Documents: React.FC = () => {
     setAccountForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleCreateAccount = (e: React.FormEvent) => {
+  const resetAccountWizard = () => {
+    setAccountStep(1);
+    setIdFile(null);
+    setIdDragging(false);
+    setExtracting(false);
+    setExtractError(null);
+    setAccountForm(emptyAccountForm);
+  };
+
+  const openNewAccount = () => {
+    resetAccountWizard();
+    setAccountModalOpen(true);
+  };
+
+  const closeAccountModal = () => {
+    setAccountModalOpen(false);
+    resetAccountWizard();
+  };
+
+  const isValidIdFile = (file: File) =>
+    ['image/jpeg', 'image/png', 'application/pdf'].includes(file.type) ||
+    /\.(jpe?g|png|pdf)$/i.test(file.name);
+
+  const handleIdFiles = (files: File[]) => {
+    const file = files[0];
+    if (!file) return;
+    if (!isValidIdFile(file)) {
+      toast.error(
+        language === 'ar'
+          ? 'يُسمح فقط بملفات JPG أو PNG أو PDF'
+          : 'Only JPG, PNG, or PDF files are allowed'
+      );
+      return;
+    }
+    setExtractError(null);
+    setIdFile(file);
+  };
+
+  const handleIdDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIdDragging(true);
+  };
+
+  const handleIdDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIdDragging(false);
+  };
+
+  const handleIdDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIdDragging(false);
+    handleIdFiles(Array.from(e.dataTransfer.files));
+  };
+
+  const handleIdInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleIdFiles(e.target.files ? Array.from(e.target.files) : []);
+  };
+
+  const handleExtractData = () => {
+    if (!idFile || extracting) return;
+    setExtractError(null);
+    setExtracting(true);
+
+    // Simulated OCR/extraction. Files whose name hints at a poor scan
+    // (e.g. "blur", "unclear", "fail") demonstrate the failure path.
+    const willFail = /blur|unclear|fail/i.test(idFile.name);
+
+    window.setTimeout(() => {
+      setExtracting(false);
+      if (willFail) {
+        setExtractError(
+          language === 'ar'
+            ? 'تعذّر قراءة الهوية بوضوح. يرجى رفع صورة أوضح.'
+            : 'Could not read the ID clearly. Please upload a clearer photo.'
+        );
+        return;
+      }
+      // Prefill the review step with the extracted details.
+      setAccountForm((prev) => ({
+        ...prev,
+        fullName: prev.fullName || 'Ahmad Khalil',
+        nationalId: prev.nationalId || '400123456',
+      }));
+      setAccountStep(2);
+    }, 2000);
+  };
+
+  const goToCompleteStep = (e: React.FormEvent) => {
     e.preventDefault();
     if (!accountForm.fullName.trim() || !accountForm.nationalId.trim()) {
       toast.error(
@@ -226,13 +315,12 @@ export const Documents: React.FC = () => {
       );
       return;
     }
+    setAccountStep(3);
     toast.success(
       language === 'ar'
         ? `تم بدء طلب فتح حساب لـ ${accountForm.fullName}`
         : `New account request started for ${accountForm.fullName}`
     );
-    setAccountForm(emptyAccountForm);
-    setAccountModalOpen(false);
   };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -326,7 +414,7 @@ export const Documents: React.FC = () => {
             const Icon = task.icon;
             const handleClick = () => {
               if (!task.available) return;
-              if (task.id === 'open-account') setAccountModalOpen(true);
+              if (task.id === 'open-account') openNewAccount();
             };
 
             return (
@@ -394,7 +482,10 @@ export const Documents: React.FC = () => {
         </div>
 
         {/* Open New Account modal */}
-        <Dialog open={accountModalOpen} onOpenChange={setAccountModalOpen}>
+        <Dialog
+          open={accountModalOpen}
+          onOpenChange={(open) => (open ? setAccountModalOpen(true) : closeAccountModal())}
+        >
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle>
@@ -402,13 +493,150 @@ export const Documents: React.FC = () => {
                 </DialogTitle>
                 <DialogDescription>
                   {language === 'ar'
-                    ? 'أدخل بيانات العميل لبدء عملية فتح حساب جديد'
-                    : 'Enter the customer details to start opening a new account'}
+                    ? 'أكمل الخطوات لبدء عملية فتح حساب جديد'
+                    : 'Complete the steps to start opening a new account'}
                 </DialogDescription>
               </DialogHeader>
 
-              <form onSubmit={handleCreateAccount} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Step indicator */}
+              <div className="flex items-center justify-between py-1">
+                {[
+                  { n: 1, label: language === 'ar' ? 'رفع الهوية' : 'Upload ID' },
+                  { n: 2, label: language === 'ar' ? 'مراجعة البيانات' : 'Review Data' },
+                  { n: 3, label: language === 'ar' ? 'اكتمال' : 'Complete' },
+                ].map((s, i, arr) => (
+                  <React.Fragment key={s.n}>
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div
+                        className={cn(
+                          'flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors',
+                          accountStep > s.n && 'bg-primary border-primary text-primary-foreground',
+                          accountStep === s.n && 'border-primary text-primary',
+                          accountStep < s.n && 'border-border text-muted-foreground'
+                        )}
+                      >
+                        {accountStep > s.n ? <CheckCircle2 className="h-5 w-5" /> : s.n}
+                      </div>
+                      <span
+                        className={cn(
+                          'text-xs whitespace-nowrap',
+                          accountStep >= s.n
+                            ? 'text-foreground font-medium'
+                            : 'text-muted-foreground'
+                        )}
+                      >
+                        {s.label}
+                      </span>
+                    </div>
+                    {i < arr.length - 1 && (
+                      <div
+                        className={cn(
+                          'h-0.5 flex-1 mx-2 rounded',
+                          accountStep > s.n ? 'bg-primary' : 'bg-border'
+                        )}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+
+              {/* Step 1: Upload ID + extraction */}
+              {accountStep === 1 && (
+                <div className="space-y-4">
+                  {extracting ? (
+                    <div className="border-2 border-dashed border-border rounded-xl p-8 flex flex-col items-center gap-4 text-center">
+                      <Loader2 className="h-12 w-12 text-primary animate-spin" />
+                      <p className="text-muted-foreground">
+                        {language === 'ar'
+                          ? 'جارٍ استخراج بيانات العميل...'
+                          : 'Extracting customer information...'}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className={cn(
+                          'border-2 border-dashed rounded-xl p-8 text-center transition-all',
+                          idDragging
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        )}
+                        onDragOver={handleIdDragOver}
+                        onDragLeave={handleIdDragLeave}
+                        onDrop={handleIdDrop}
+                      >
+                        {idFile ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <FileText className="h-12 w-12 text-primary" />
+                            <p className="font-medium break-all max-w-[280px]">{idFile.name}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setIdFile(null);
+                                setExtractError(null);
+                              }}
+                            >
+                              {language === 'ar' ? 'إزالة الملف' : 'Remove file'}
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold mb-2">
+                              {language === 'ar'
+                                ? 'اسحب وأفلت هوية العميل هنا'
+                                : 'Drag and drop the customer ID here'}
+                            </h3>
+                            <p className="text-muted-foreground mb-4">
+                              {language === 'ar'
+                                ? 'أو اضغط لاختيار ملف (JPG، PNG، PDF)'
+                                : 'or click to browse (JPG, PNG, PDF)'}
+                            </p>
+                            <input
+                              type="file"
+                              id="id-upload"
+                              className="hidden"
+                              accept=".jpg,.jpeg,.png,.pdf"
+                              onChange={handleIdInput}
+                            />
+                            <label htmlFor="id-upload">
+                              <Button asChild className="gradient-bg">
+                                <span>{language === 'ar' ? 'اختيار ملف' : 'Choose File'}</span>
+                              </Button>
+                            </label>
+                          </>
+                        )}
+                      </div>
+
+                      {extractError && (
+                        <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                          <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-sm text-destructive">{extractError}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
+                              onClick={handleExtractData}
+                            >
+                              {language === 'ar' ? 'حاول مرة أخرى' : 'Try Again'}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2: Review Data */}
+              {accountStep === 2 && (
+                <form
+                  id="review-account-form"
+                  onSubmit={goToCompleteStep}
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                >
                   <div className="space-y-2">
                     <Label htmlFor="acc-full-name">
                       {language === 'ar' ? 'الاسم الكامل' : 'Full Name'}
@@ -492,27 +720,83 @@ export const Documents: React.FC = () => {
                       placeholder="0"
                     />
                   </div>
-                </div>
+                </form>
+              )}
 
-                <div className="flex justify-end gap-2 pt-2">
+              {/* Step 3: Complete */}
+              {accountStep === 3 && (
+                <div className="flex flex-col items-center text-center gap-4 py-6">
+                  <div className="p-4 rounded-full bg-success/10">
+                    <CheckCircle2 className="h-12 w-12 text-success" />
+                  </div>
+                  <h3 className="text-lg font-semibold">
+                    {language === 'ar' ? 'اكتمل الطلب' : 'All Done'}
+                  </h3>
+                  <p className="text-muted-foreground max-w-sm">
+                    {language === 'ar'
+                      ? `تم بدء طلب فتح حساب جديد${accountForm.fullName ? ` لـ ${accountForm.fullName}` : ''}.`
+                      : `The new account request${accountForm.fullName ? ` for ${accountForm.fullName}` : ''} has been started.`}
+                  </p>
+                </div>
+              )}
+
+              {/* Footer actions */}
+              <div className="flex items-center justify-between gap-2 pt-2">
+                {accountStep < 3 ? (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setAccountModalOpen(false)}
+                    onClick={closeAccountModal}
+                    disabled={extracting}
                   >
                     {language === 'ar' ? 'إلغاء' : 'Cancel'}
                   </Button>
-                  <Button type="submit" className="gradient-bg gap-2">
-                    <UserPlus className="h-4 w-4" />
-                    {language === 'ar' ? 'إنشاء الحساب' : 'Create Account'}
-                  </Button>
+                ) : (
+                  <span />
+                )}
+
+                <div className="flex gap-2">
+                  {accountStep === 2 && (
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(1)}>
+                      {language === 'ar' ? 'رجوع' : 'Back'}
+                    </Button>
+                  )}
+                  {accountStep === 1 && idFile && !extractError && (
+                    <Button
+                      type="button"
+                      className="gradient-bg gap-2"
+                      onClick={handleExtractData}
+                      disabled={extracting}
+                    >
+                      {extracting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {language === 'ar' ? 'جارٍ الاستخراج...' : 'Extracting...'}
+                        </>
+                      ) : (
+                        <>
+                          <ScanLine className="h-4 w-4" />
+                          {language === 'ar' ? 'استخراج البيانات' : 'Extract Data'}
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {accountStep === 2 && (
+                    <Button type="submit" form="review-account-form" className="gradient-bg gap-2">
+                      {language === 'ar' ? 'التالي' : 'Next'}
+                      <StartArrow className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {accountStep === 3 && (
+                    <Button type="button" className="gradient-bg" onClick={closeAccountModal}>
+                      {language === 'ar' ? 'تم' : 'Done'}
+                    </Button>
+                  )}
                 </div>
-              </form>
+              </div>
             </DialogContent>
           </Dialog>
 
-        {showLegacyDocuments && (
-          <>
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="stat-card">
@@ -714,8 +998,6 @@ export const Documents: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
-          </>
-        )}
       </div>
     </DashboardLayout>
   );
