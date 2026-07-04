@@ -12,7 +12,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   Table,
@@ -35,7 +34,21 @@ import {
   FileSpreadsheet,
   File,
   Loader2,
+  UserPlus,
+  UserCog,
+  UserX,
+  ArrowRight,
+  ArrowLeft,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -141,12 +154,86 @@ const getStatusBadge = (status: Document['status'], language: string) => {
   }
 };
 
+interface BranchTask {
+  id: string;
+  icon: React.ElementType;
+  titleKey: string;
+  descKey: string;
+  available: boolean;
+}
+
+const branchTasks: BranchTask[] = [
+  {
+    id: 'open-account',
+    icon: UserPlus,
+    titleKey: 'tasks.openAccount',
+    descKey: 'tasks.openAccount.desc',
+    available: true,
+  },
+  {
+    id: 'update-customer',
+    icon: UserCog,
+    titleKey: 'tasks.updateCustomer',
+    descKey: 'tasks.updateCustomer.desc',
+    available: false,
+  },
+  {
+    id: 'close-account',
+    icon: UserX,
+    titleKey: 'tasks.closeAccount',
+    descKey: 'tasks.closeAccount.desc',
+    available: false,
+  },
+];
+
 export const Documents: React.FC = () => {
-  const { t, language } = useLanguage();
+  const { t, language, direction } = useLanguage();
+  // Legacy Documents content (KPI cards, upload area, table) is kept in the
+  // component but not rendered for now — the page currently surfaces the
+  // Branch Tasks selection grid instead.
+  const showLegacyDocuments = false;
+  const StartArrow = direction === 'rtl' ? ArrowLeft : ArrowRight;
   const [documents, setDocuments] = useState<Document[]>(mockDocuments);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+
+  const emptyAccountForm = {
+    fullName: '',
+    nationalId: '',
+    phone: '',
+    email: '',
+    accountType: 'savings',
+    initialDeposit: '',
+  };
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountForm, setAccountForm] = useState(emptyAccountForm);
+
+  const handleAccountFieldChange = (
+    field: keyof typeof emptyAccountForm,
+    value: string
+  ) => {
+    setAccountForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleCreateAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accountForm.fullName.trim() || !accountForm.nationalId.trim()) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى إدخال الاسم الكامل ورقم الهوية'
+          : 'Please enter the full name and national ID'
+      );
+      return;
+    }
+    toast.success(
+      language === 'ar'
+        ? `تم بدء طلب فتح حساب لـ ${accountForm.fullName}`
+        : `New account request started for ${accountForm.fullName}`
+    );
+    setAccountForm(emptyAccountForm);
+    setAccountModalOpen(false);
+  };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -227,14 +314,205 @@ export const Documents: React.FC = () => {
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground">{t('docs.title')}</h1>
-          <p className="text-muted-foreground mt-1">
-            {language === 'ar'
-              ? 'رفع ومعالجة المستندات باستخدام الذكاء الاصطناعي'
-              : 'Upload and process documents with AI-powered extraction'}
-          </p>
+          <h1 className="text-3xl font-bold text-foreground">
+            {language === 'ar' ? 'المستندات' : 'Documents'}
+          </h1>
+          <p className="text-muted-foreground mt-1">{t('tasks.subtitle')}</p>
         </div>
 
+        {/* Branch task selection grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {branchTasks.map((task) => {
+            const Icon = task.icon;
+            const handleClick = () => {
+              if (!task.available) return;
+              if (task.id === 'open-account') setAccountModalOpen(true);
+            };
+
+            return (
+              <Card
+                key={task.id}
+                onClick={handleClick}
+                role={task.available ? 'button' : undefined}
+                tabIndex={task.available ? 0 : undefined}
+                onKeyDown={(e) => {
+                  if (task.available && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    handleClick();
+                  }
+                }}
+                className={cn(
+                  'stat-card transition-all duration-200',
+                  task.available
+                    ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary'
+                    : 'opacity-60 cursor-not-allowed'
+                )}
+                aria-disabled={!task.available}
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-start gap-4">
+                    <div
+                      className={cn(
+                        'p-3 rounded-xl flex-shrink-0',
+                        task.available ? 'bg-primary/10' : 'bg-muted'
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          'h-6 w-6',
+                          task.available ? 'text-primary' : 'text-muted-foreground'
+                        )}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-semibold text-lg text-foreground">
+                          {t(task.titleKey)}
+                        </h3>
+                        {!task.available && (
+                          <Badge variant="secondary" className="flex-shrink-0 text-xs">
+                            {t('tasks.comingSoon')}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {t(task.descKey)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {task.available && (
+                    <div className="mt-4 flex items-center gap-1 text-sm font-medium text-primary">
+                      {t('tasks.start')}
+                      <StartArrow className="h-4 w-4" />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Open New Account modal */}
+        <Dialog open={accountModalOpen} onOpenChange={setAccountModalOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>
+                  {language === 'ar' ? 'فتح حساب جديد' : 'Open New Account'}
+                </DialogTitle>
+                <DialogDescription>
+                  {language === 'ar'
+                    ? 'أدخل بيانات العميل لبدء عملية فتح حساب جديد'
+                    : 'Enter the customer details to start opening a new account'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <form onSubmit={handleCreateAccount} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-full-name">
+                      {language === 'ar' ? 'الاسم الكامل' : 'Full Name'}
+                    </Label>
+                    <Input
+                      id="acc-full-name"
+                      value={accountForm.fullName}
+                      onChange={(e) => handleAccountFieldChange('fullName', e.target.value)}
+                      placeholder={language === 'ar' ? 'اسم العميل' : 'Customer name'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-national-id">
+                      {language === 'ar' ? 'رقم الهوية' : 'National ID'}
+                    </Label>
+                    <Input
+                      id="acc-national-id"
+                      value={accountForm.nationalId}
+                      onChange={(e) => handleAccountFieldChange('nationalId', e.target.value)}
+                      placeholder={language === 'ar' ? 'رقم الهوية' : 'ID number'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-phone">
+                      {language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}
+                    </Label>
+                    <Input
+                      id="acc-phone"
+                      type="tel"
+                      value={accountForm.phone}
+                      onChange={(e) => handleAccountFieldChange('phone', e.target.value)}
+                      placeholder={language === 'ar' ? 'رقم الهاتف' : 'Phone'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-email">
+                      {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+                    </Label>
+                    <Input
+                      id="acc-email"
+                      type="email"
+                      value={accountForm.email}
+                      onChange={(e) => handleAccountFieldChange('email', e.target.value)}
+                      placeholder={language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-type">
+                      {language === 'ar' ? 'نوع الحساب' : 'Account Type'}
+                    </Label>
+                    <Select
+                      value={accountForm.accountType}
+                      onValueChange={(value) => handleAccountFieldChange('accountType', value)}
+                    >
+                      <SelectTrigger id="acc-type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="savings">
+                          {language === 'ar' ? 'حساب توفير' : 'Savings'}
+                        </SelectItem>
+                        <SelectItem value="current">
+                          {language === 'ar' ? 'حساب جاري' : 'Current'}
+                        </SelectItem>
+                        <SelectItem value="business">
+                          {language === 'ar' ? 'حساب تجاري' : 'Business'}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="acc-deposit">
+                      {language === 'ar' ? 'الإيداع المبدئي' : 'Initial Deposit'}
+                    </Label>
+                    <Input
+                      id="acc-deposit"
+                      type="number"
+                      min="0"
+                      value={accountForm.initialDeposit}
+                      onChange={(e) => handleAccountFieldChange('initialDeposit', e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setAccountModalOpen(false)}
+                  >
+                    {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                  </Button>
+                  <Button type="submit" className="gradient-bg gap-2">
+                    <UserPlus className="h-4 w-4" />
+                    {language === 'ar' ? 'إنشاء الحساب' : 'Create Account'}
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+        {showLegacyDocuments && (
+          <>
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="stat-card">
@@ -436,6 +714,8 @@ export const Documents: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+          </>
+        )}
       </div>
     </DashboardLayout>
   );

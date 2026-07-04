@@ -33,6 +33,27 @@ const translations: Translations = {
   'dashboard.recentActivity': { en: 'Recent Activity', ar: 'النشاط الأخير' },
   'dashboard.quickActions': { en: 'Quick Actions', ar: 'إجراءات سريعة' },
   
+  // Branch Tasks
+  'tasks.title': { en: 'Branch Tasks', ar: 'مهام الفرع' },
+  'tasks.subtitle': { en: 'Select a task to get started', ar: 'اختر مهمة للبدء' },
+  'tasks.start': { en: 'Start', ar: 'ابدأ' },
+  'tasks.comingSoon': { en: 'Coming soon', ar: 'قريباً' },
+  'tasks.openAccount': { en: 'Open New Account', ar: 'فتح حساب جديد' },
+  'tasks.openAccount.desc': {
+    en: 'Start the new customer account opening process',
+    ar: 'ابدأ عملية فتح حساب لعميل جديد',
+  },
+  'tasks.updateCustomer': { en: 'Update Customer Info', ar: 'تحديث بيانات العميل' },
+  'tasks.updateCustomer.desc': {
+    en: 'Edit and maintain existing customer details',
+    ar: 'تعديل وصيانة بيانات العملاء الحاليين',
+  },
+  'tasks.closeAccount': { en: 'Close Account', ar: 'إغلاق حساب' },
+  'tasks.closeAccount.desc': {
+    en: 'Process the closure of a customer account',
+    ar: 'معالجة إغلاق حساب عميل',
+  },
+
   // Credit Risk
   'credit.title': { en: 'Credit Risk Assessment', ar: 'تقييم مخاطر الائتمان' },
   'credit.newAssessment': { en: 'New Assessment', ar: 'تقييم جديد' },
