@@ -10,7 +10,7 @@ from services.auth import require_account_opening_role
 from services.field_extraction import extract_all_fields
 from services.form_generator import FormFields, SignaturePayload, generate_account_opening_pdf
 from services.ocr import run_ocr
-from services.store import create_document, get_document
+from services.store import create_document, get_document, store_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,7 @@ async def generate_form(
         raise HTTPException(status_code=500, detail="Could not generate the account opening form.") from exc
 
     filename = f"account_opening_{document_id}.pdf"
+    store_pdf(document_id, pdf_bytes, filename)
     logger.info("[generate-form] document_id=%s bytes=%d format=%s", document_id, len(pdf_bytes), body.return_format)
 
     if body.return_format == "base64":
@@ -236,4 +237,22 @@ async def generate_form(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{document_id}/pdf")
+async def download_pdf(
+    document_id: str,
+    _role: str = Depends(require_account_opening_role),
+):
+    """Return the account-opening PDF generated for this document (same server session)."""
+    doc = get_document(document_id)
+    if not doc or not doc.pdf_bytes:
+        raise HTTPException(status_code=404, detail="PDF not available for this document.")
+
+    filename = doc.pdf_filename or f"account_opening_{document_id}.pdf"
+    return Response(
+        content=doc.pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )

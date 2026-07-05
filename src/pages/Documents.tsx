@@ -14,6 +14,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -47,17 +57,21 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { extractId, extractFields, generateAccountForm, openNewAccount } from '@/lib/accountApi';
+import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { useAuth } from '@/contexts/AuthContext';
 import { canOpenAccount } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import {
+  deleteDocumentRecord,
+  resolveDocumentForView,
   insertDocument,
+  uploadDocumentToStorage,
   confidenceToPercent,
   docTypeIconKey,
   formatConfidence,
   formatDocumentDate,
+  type DocumentRecord,
   useDocuments,
 } from '@/hooks/useDocuments';
 
@@ -153,6 +167,7 @@ export const Documents: React.FC = () => {
     loading: documentsLoading,
     error: documentsError,
     reload: reloadDocuments,
+    removeLocal,
   } = useDocuments();
 
   // Best-effort audit trail (RLS lets users insert their own rows).
@@ -177,6 +192,9 @@ export const Documents: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
+  const [docToDelete, setDocToDelete] = useState<DocumentRecord | null>(null);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   const emptyAccountForm = {
     firstName: '',
@@ -534,10 +552,27 @@ export const Documents: React.FC = () => {
       // Persist completed account opening as a documents row (realtime will sync the table).
       if (user?.id) {
         try {
+          const pdfFilename = result.file_name ?? `${baseName}_account_opening.pdf`;
+          let storagePath: string | null = null;
+
+          if (generatedPdfUrl) {
+            try {
+              const pdfBlob = await fetch(generatedPdfUrl).then((r) => r.blob());
+              storagePath = await uploadDocumentToStorage(
+                user.id,
+                pdfBlob,
+                pdfFilename,
+                'application/pdf'
+              );
+            } catch (uploadErr) {
+              console.warn('PDF storage upload skipped:', uploadErr);
+            }
+          }
+
           await insertDocument({
-            name: result.file_name ?? `${baseName}_account_opening.pdf`,
+            name: pdfFilename,
             type: 'pdf',
-            file_path: documentId || null,
+            file_path: storagePath ?? (documentId || null),
             size: idFile ? `${(idFile.size / 1024 / 1024).toFixed(1)} MB` : null,
             status: 'completed',
             upload_date: new Date().toISOString().slice(0, 10),
@@ -586,6 +621,66 @@ export const Documents: React.FC = () => {
       );
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleViewDocument = async (doc: DocumentRecord) => {
+    if (!doc.file_path?.trim()) {
+      toast.error(
+        language === 'ar'
+          ? 'لا يوجد ملف مرفق لهذا المستند'
+          : 'No file is attached to this document'
+      );
+      return;
+    }
+
+    setViewingDocId(doc.id);
+    try {
+      const { url } = await resolveDocumentForView(doc, (documentId) =>
+        fetchDocumentPdf(documentId, authz)
+      );
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        toast.error(
+          language === 'ar'
+            ? 'تعذّر فتح نافذة جديدة — تحقق من مانع النوافذ المنبثقة'
+            : 'Could not open a new tab — check your popup blocker'
+        );
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر فتح المستند'
+            : 'Could not open the document'
+      );
+    } finally {
+      setViewingDocId(null);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!docToDelete || deletingDocId) return;
+
+    setDeletingDocId(docToDelete.id);
+    try {
+      await deleteDocumentRecord(docToDelete);
+      removeLocal(docToDelete.id);
+      toast.success(
+        language === 'ar' ? 'تم حذف المستند' : 'Document deleted'
+      );
+      setDocToDelete(null);
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر حذف المستند'
+            : 'Could not delete the document'
+      );
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -645,10 +740,12 @@ export const Documents: React.FC = () => {
               ? 'excel'
               : 'image';
 
+        const storagePath = await uploadDocumentToStorage(user.id, file, file.name, file.type);
+
         await insertDocument({
           name: file.name,
           type,
-          file_path: null, // TODO: set storage path when upload-to-storage is implemented
+          file_path: storagePath,
           size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
           status: 'processing',
           upload_date: today,
@@ -1553,25 +1650,35 @@ export const Documents: React.FC = () => {
                         <TableCell className="text-muted-foreground">{doc.size ?? '—'}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            {/* TODO: open signed URL from doc.file_path when storage viewer is wired */}
                             <Button
                               variant="ghost"
                               size="icon"
                               title={language === 'ar' ? 'عرض' : 'View'}
-                              disabled={!doc.file_path}
-                              onClick={() => {
-                                if (doc.file_path) {
-                                  window.open(doc.file_path, '_blank', 'noopener,noreferrer');
-                                }
-                              }}
+                              disabled={viewingDocId === doc.id}
+                              onClick={() => handleViewDocument(doc)}
                             >
-                              <Eye className="h-4 w-4" />
+                              {viewingDocId === doc.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
                             </Button>
                             <Button variant="ghost" size="icon" disabled title="Download">
                               <Download className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="text-destructive" disabled title="Delete">
-                              <Trash2 className="h-4 w-4" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              title={language === 'ar' ? 'حذف' : 'Delete'}
+                              disabled={deletingDocId === doc.id}
+                              onClick={() => setDocToDelete(doc)}
+                            >
+                              {deletingDocId === doc.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
                             </Button>
                           </div>
                         </TableCell>
@@ -1583,6 +1690,50 @@ export const Documents: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+
+        <AlertDialog
+          open={docToDelete != null}
+          onOpenChange={(open) => {
+            if (!open && !deletingDocId) setDocToDelete(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {language === 'ar' ? 'حذف المستند؟' : 'Delete document?'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {language === 'ar'
+                  ? `سيتم حذف "${docToDelete?.name ?? ''}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`
+                  : `"${docToDelete?.name ?? ''}" will be permanently deleted. This cannot be undone.`}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={!!deletingDocId}>
+                {language === 'ar' ? 'إلغاء' : 'Cancel'}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={!!deletingDocId}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDelete();
+                }}
+              >
+                {deletingDocId ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    {language === 'ar' ? 'جارٍ الحذف...' : 'Deleting...'}
+                  </>
+                ) : language === 'ar' ? (
+                  'حذف'
+                ) : (
+                  'Delete'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );

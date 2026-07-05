@@ -19,6 +19,8 @@ class StoredDocument:
     language: Language
     ocr_confidence: float = 0.0
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    pdf_bytes: bytes | None = None
+    pdf_filename: str | None = None
 
 
 _documents: dict[str, StoredDocument] = {}
@@ -44,3 +46,10 @@ def create_document(
 
 def get_document(document_id: str) -> StoredDocument | None:
     return _documents.get(document_id)
+
+
+def store_pdf(document_id: str, pdf_bytes: bytes, filename: str) -> None:
+    doc = _documents.get(document_id)
+    if doc:
+        doc.pdf_bytes = pdf_bytes
+        doc.pdf_filename = filename

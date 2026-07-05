@@ -172,6 +172,30 @@ export async function generateAccountForm(
   );
 }
 
+/** Fetch a previously generated account-opening PDF from the backend (in-memory, same session). */
+export async function fetchDocumentPdf(documentId: string, authz: AccountAuthz): Promise<Blob> {
+  assertCanOpenAccount(authz.role);
+
+  const res = await fetch(
+    `${API_BASE_URL}/documents/${encodeURIComponent(documentId)}/pdf`,
+    { headers: authHeaders(authz) }
+  );
+
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const data = (await res.json()) as Record<string, unknown>;
+      if (data.detail != null) message = String(data.detail);
+      else if (data.message != null) message = String(data.message);
+    } catch {
+      // Non-JSON error body.
+    }
+    throw new Error(message);
+  }
+
+  return res.blob();
+}
+
 /** Step 4 — submit the confirmed fields to open the account. */
 export async function openNewAccount(
   payload: OpenAccountPayload,

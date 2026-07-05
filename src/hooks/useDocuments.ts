@@ -122,6 +122,15 @@ export function useDocuments() {
           setDocuments((prev) => prev.map((d) => (d.id === row.id ? row : d)));
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'documents' },
+        (payload) => {
+          const deletedId = (payload.old as { id?: string }).id;
+          if (!deletedId) return;
+          setDocuments((prev) => prev.filter((d) => d.id !== deletedId));
+        }
+      )
       .subscribe();
 
     return () => {
@@ -139,7 +148,11 @@ export function useDocuments() {
     });
   }, []);
 
-  return { documents, loading, error, reload: load, upsertLocal };
+  const removeLocal = useCallback((id: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  }, []);
+
+  return { documents, loading, error, reload: load, upsertLocal, removeLocal };
 }
 
 export function docTypeIconKey(type: string): 'pdf' | 'image' | 'excel' | 'other' {
@@ -148,4 +161,127 @@ export function docTypeIconKey(type: string): 'pdf' | 'image' | 'excel' | 'other
   if (t.includes('image') || t.includes('jpg') || t.includes('png')) return 'image';
   if (t.includes('excel') || t.includes('xlsx') || t.includes('sheet')) return 'excel';
   return 'other';
+}
+
+const DOCUMENTS_BUCKET =
+  (import.meta.env.VITE_SUPABASE_DOCUMENTS_BUCKET as string | undefined)?.trim() || 'documents';
+
+const INTERNAL_DOC_ID = /^doc_[a-f0-9]+$/i;
+
+function parseStoragePath(filePath: string): { bucket: string; objectPath: string } {
+  let bucket = DOCUMENTS_BUCKET;
+  let objectPath = filePath;
+
+  if (filePath.includes('/')) {
+    const [first, ...rest] = filePath.split('/');
+    if (rest.length > 0 && first && !first.includes('.')) {
+      bucket = first;
+      objectPath = rest.join('/');
+    }
+  }
+
+  return { bucket, objectPath };
+}
+
+/** Upload a file blob to Supabase Storage; returns the object path stored in file_path. */
+export async function uploadDocumentToStorage(
+  userId: string,
+  file: Blob,
+  filename: string,
+  contentType?: string
+): Promise<string> {
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'document';
+  const objectPath = `${userId}/${crypto.randomUUID()}/${safeName}`;
+
+  const { error } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(objectPath, file, {
+    contentType: contentType || file.type || 'application/octet-stream',
+    upsert: false,
+  });
+
+  if (error) throw error;
+  return objectPath;
+}
+
+/** Resolve a viewable URL from file_path (absolute URL or Supabase Storage object path). */
+export async function resolveDocumentViewUrl(filePath: string): Promise<string> {
+  const trimmed = filePath.trim();
+  if (!trimmed) {
+    throw new Error('No file path on this document.');
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (INTERNAL_DOC_ID.test(trimmed)) {
+    throw new Error('INTERNAL_DOC_ID');
+  }
+
+  const { bucket, objectPath } = parseStoragePath(trimmed);
+
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(objectPath, 60 * 60);
+
+  if (error || !data?.signedUrl) {
+    throw error ?? new Error('Could not open file from storage.');
+  }
+
+  return data.signedUrl;
+}
+
+export type DocumentViewSource = 'url' | 'blob';
+
+export interface DocumentViewTarget {
+  url: string;
+  source: DocumentViewSource;
+}
+
+/**
+ * Resolve how to open a document row: storage signed URL, direct URL, or backend PDF blob.
+ */
+export async function resolveDocumentForView(
+  doc: DocumentRecord,
+  fetchBackendPdf?: (documentId: string) => Promise<Blob>
+): Promise<DocumentViewTarget> {
+  const path = doc.file_path?.trim();
+  if (!path) {
+    throw new Error('No file is attached to this document.');
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return { url: path, source: 'url' };
+  }
+
+  if (INTERNAL_DOC_ID.test(path)) {
+    if (fetchBackendPdf) {
+      try {
+        const blob = await fetchBackendPdf(path);
+        return { url: URL.createObjectURL(blob), source: 'blob' };
+      } catch {
+        // Fall through to user-friendly error below.
+      }
+    }
+    throw new Error(
+      'This document was saved before file storage was enabled and the PDF is no longer on the server. ' +
+        'Complete a new account opening to save a viewable copy.'
+    );
+  }
+
+  const signedUrl = await resolveDocumentViewUrl(path);
+  return { url: signedUrl, source: 'url' };
+}
+
+export async function deleteDocumentRecord(record: DocumentRecord): Promise<void> {
+  const { error } = await supabase.from('documents').delete().eq('id', record.id);
+  if (error) throw error;
+
+  const path = record.file_path?.trim();
+  if (path && !/^https?:\/\//i.test(path) && !INTERNAL_DOC_ID.test(path)) {
+    const { bucket, objectPath } = parseStoragePath(path);
+    const { error: storageError } = await supabase.storage.from(bucket).remove([objectPath]);
+    if (storageError) {
+      console.warn('[documents] storage cleanup skipped:', storageError.message);
+    }
+  }
 }
