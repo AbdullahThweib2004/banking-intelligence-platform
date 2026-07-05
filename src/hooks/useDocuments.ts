@@ -273,8 +273,20 @@ export async function resolveDocumentForView(
 }
 
 export async function deleteDocumentRecord(record: DocumentRecord): Promise<void> {
-  const { error } = await supabase.from('documents').delete().eq('id', record.id);
+  const { data, error } = await supabase
+    .from('documents')
+    .delete()
+    .eq('id', record.id)
+    .select('id')
+    .maybeSingle();
+
   if (error) throw error;
+
+  if (!data) {
+    throw new Error(
+      'Document was not deleted — you may not have permission, or it was already removed.'
+    );
+  }
 
   const path = record.file_path?.trim();
   if (path && !/^https?:\/\//i.test(path) && !INTERNAL_DOC_ID.test(path)) {
