@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from services.auth import require_account_opening_role
 from services.field_parser import parse_id_fields
 from services.ocr import run_ocr
 from services.store import create_document, get_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -37,21 +41,43 @@ async def extract_id(
     filename = file.filename or "upload.jpg"
 
     try:
-        raw_text, language = run_ocr(data, filename)
+        ocr = run_ocr(data, filename)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read the ID clearly. Please upload a clearer photo.",
+        ) from exc
     except Exception as exc:
+        logger.exception("OCR failed for %s", filename)
         raise HTTPException(
             status_code=422,
             detail="Could not read the ID clearly. Please upload a clearer photo.",
         ) from exc
 
-    doc = create_document(filename, raw_text, language)
+    # Temporary debug — visible in the API server console.
+    logger.info(
+        "[extract-id] document pending | file=%s | ocr_confidence=%.1f | raw_text=%r",
+        filename,
+        ocr.ocr_confidence,
+        ocr.raw_text[:500] + ("..." if len(ocr.raw_text) > 500 else ""),
+    )
+
+    doc = create_document(
+        filename,
+        ocr.raw_text,
+        ocr.language,
+        ocr_confidence=ocr.ocr_confidence,
+    )
+
+    logger.info("[extract-id] stored document_id=%s", doc.document_id)
 
     return {
         "document_id": doc.document_id,
         "raw_text": doc.raw_text,
         "language": doc.language,
+        "ocr_confidence": doc.ocr_confidence,
     }
 
 
@@ -71,7 +97,22 @@ async def extract_fields(
             detail="Could not read the ID clearly. Please upload a clearer photo.",
         )
 
-    parsed = parse_id_fields(doc.raw_text)
+    logger.info(
+        "[extract-fields] document_id=%s | parsing raw_text=%r",
+        document_id,
+        doc.raw_text[:500] + ("..." if len(doc.raw_text) > 500 else ""),
+    )
+
+    parsed = parse_id_fields(doc.raw_text, ocr_confidence=doc.ocr_confidence)
+
+    logger.info(
+        "[extract-fields] document_id=%s | first=%s last=%s id=%s confidence=%.1f",
+        document_id,
+        parsed.first_name,
+        parsed.last_name,
+        parsed.id_number,
+        parsed.confidence,
+    )
 
     return {
         "document_id": doc.document_id,
@@ -83,4 +124,5 @@ async def extract_fields(
         "id_number": parsed.id_number,
         "confidence": parsed.confidence,
         "language": doc.language,
+        "raw_text": doc.raw_text,
     }

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import io
-import os
+import logging
 import re
 import shutil
+from dataclasses import dataclass
 from typing import Literal
 
 import cv2
@@ -14,33 +15,31 @@ from PIL import Image
 
 try:
     import pytesseract
-except ImportError:  # pragma: no cover
-    pytesseract = None  # type: ignore
+except ImportError as exc:  # pragma: no cover
+    raise RuntimeError(
+        "pytesseract is not installed. Run: pip install pytesseract"
+    ) from exc
 
 try:
     import fitz  # PyMuPDF
 except ImportError:  # pragma: no cover
     fitz = None  # type: ignore
 
+logger = logging.getLogger(__name__)
 
 Language = Literal["en", "ar", "mixed"]
 
-_MOCK_ID_TEXT = """Palestinian ID Card
-First Name: Ahmad
-Last Name: Khalil
-Date of Birth: 1990-05-14
-Father Name: Mahmoud
-Mother Name: Layla
-ID Number: 400123456
-"""
+
+@dataclass
+class OcrResult:
+    raw_text: str
+    language: Language
+    """Average Tesseract word confidence (0–100)."""
+    ocr_confidence: float
 
 
 def tesseract_available() -> bool:
-    return pytesseract is not None and shutil.which("tesseract") is not None
-
-
-def mock_allowed() -> bool:
-    return os.environ.get("OCR_ALLOW_MOCK", "").lower() in ("1", "true", "yes")
+    return shutil.which("tesseract") is not None
 
 
 def _bytes_to_bgr(data: bytes, filename: str) -> np.ndarray:
@@ -66,10 +65,8 @@ def preprocess_image(bgr: np.ndarray) -> np.ndarray:
     """Grayscale, denoise, deskew — returns a single-channel image ready for OCR."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    # Denoise while preserving edges.
     denoised = cv2.fastNlMeansDenoising(gray, None, h=10, templateWindowSize=7, searchWindowSize=21)
 
-    # Deskew via minimum-area bounding rectangle on foreground pixels.
     _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     coords = np.column_stack(np.where(binary < 128))
     if len(coords) > 100:
@@ -90,7 +87,6 @@ def preprocess_image(bgr: np.ndarray) -> np.ndarray:
                 borderMode=cv2.BORDER_REPLICATE,
             )
 
-    # Adaptive threshold for clearer text contrast.
     processed = cv2.adaptiveThreshold(
         denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
     )
@@ -109,32 +105,48 @@ def detect_language(text: str) -> Language:
     return "en"
 
 
-def run_ocr(file_bytes: bytes, filename: str) -> tuple[str, Language]:
+def _mean_tesseract_confidence(pil: Image.Image, lang: str) -> float:
+    data = pytesseract.image_to_data(pil, lang=lang, output_type=pytesseract.Output.DICT)
+    scores = [int(c) for c in data.get("conf", []) if str(c).lstrip("-").isdigit() and int(c) > 0]
+    if not scores:
+        return 0.0
+    return round(sum(scores) / len(scores), 1)
+
+
+def run_ocr(file_bytes: bytes, filename: str) -> OcrResult:
     if not tesseract_available():
-        if mock_allowed():
-            # Dev-only path when the tesseract binary is not installed locally.
-            return _MOCK_ID_TEXT.strip(), "en"
         raise RuntimeError(
-            "tesseract is not installed. Install tesseract-ocr (e.g. "
-            "'sudo pacman -S tesseract tesseract-data-eng') or set OCR_ALLOW_MOCK=true for local dev."
+            "tesseract is not installed. Install it with: "
+            "sudo pacman -S tesseract tesseract-data-eng tesseract-data-ara"
         )
 
-    try:
-        bgr = _bytes_to_bgr(file_bytes, filename)
-        processed = preprocess_image(bgr)
-        pil = Image.fromarray(processed)
-    except Exception as exc:
-        if mock_allowed():
-            return _MOCK_ID_TEXT.strip(), "en"
-        raise exc
+    bgr = _bytes_to_bgr(file_bytes, filename)
+    processed = preprocess_image(bgr)
+    pil = Image.fromarray(processed)
 
-    # English + Arabic where available; fall back to eng.
+    lang = "eng+ara"
     try:
-        raw_text = pytesseract.image_to_string(pil, lang="eng+ara")
+        raw_text = pytesseract.image_to_string(pil, lang=lang)
+        ocr_confidence = _mean_tesseract_confidence(pil, lang)
     except pytesseract.TesseractError:
-        raw_text = pytesseract.image_to_string(pil, lang="eng")
+        lang = "eng"
+        raw_text = pytesseract.image_to_string(pil, lang=lang)
+        ocr_confidence = _mean_tesseract_confidence(pil, lang)
 
     raw_text = raw_text.strip()
-    if not raw_text and mock_allowed():
-        return _MOCK_ID_TEXT.strip(), "en"
-    return raw_text, detect_language(raw_text)
+    logger.info(
+        "[OCR DEBUG] file=%s chars=%d confidence=%.1f\n--- raw_text ---\n%s\n--- end ---",
+        filename,
+        len(raw_text),
+        ocr_confidence,
+        raw_text or "(empty)",
+    )
+
+    if not raw_text:
+        raise ValueError("OCR returned no readable text from the uploaded image.")
+
+    return OcrResult(
+        raw_text=raw_text,
+        language=detect_language(raw_text),
+        ocr_confidence=ocr_confidence,
+    )

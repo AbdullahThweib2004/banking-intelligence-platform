@@ -45,7 +45,7 @@ async def open_new_account(
     base_name = f"{body.first_name}_{body.last_name}".strip().replace(" ", "_") or body.id_number
     reference_id = f"ACC-{datetime.now(timezone.utc).year}-{uuid.uuid4().hex[:6].upper()}"
 
-    parsed = parse_id_fields(doc.raw_text)
+    parsed = parse_id_fields(doc.raw_text, ocr_confidence=doc.ocr_confidence)
 
     return {
         "reference_id": reference_id,

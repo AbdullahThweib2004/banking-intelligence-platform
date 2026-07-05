@@ -8,14 +8,30 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    // Forward account-opening API calls to the FastAPI backend (port 8000).
-    // Frontend uses relative paths when VITE_API_BASE_URL is unset.
+    // Proxy only account-opening API calls — NOT the SPA route GET /documents.
     proxy: {
-      "/documents": {
+      "/documents/extract-id": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
-      "/accounts": {
+      "/documents": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        bypass(req) {
+          const url = req.url ?? "";
+          // Browser navigation to the Documents page — serve the React app.
+          if (url === "/documents" || url.startsWith("/documents?")) {
+            return url;
+          }
+          // POST /documents/{id}/extract-fields — proxy to FastAPI.
+          if (/^\/documents\/[^/]+\/extract-fields/.test(url)) {
+            return null;
+          }
+          // Any other /documents/* path is frontend — do not proxy.
+          return url;
+        },
+      },
+      "/accounts/open-new": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
