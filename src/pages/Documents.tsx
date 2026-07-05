@@ -52,69 +52,17 @@ import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad
 import { useAuth } from '@/contexts/AuthContext';
 import { canOpenAccount } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  insertDocument,
+  confidenceToPercent,
+  docTypeIconKey,
+  formatConfidence,
+  formatDocumentDate,
+  useDocuments,
+} from '@/hooks/useDocuments';
 
-interface Document {
-  id: string;
-  name: string;
-  type: 'pdf' | 'image' | 'excel';
-  uploadDate: string;
-  status: 'processing' | 'completed' | 'failed' | 'review';
-  extractedFields?: number;
-  confidence?: number;
-  size: string;
-}
-
-const mockDocuments: Document[] = [
-  {
-    id: 'DOC-001',
-    name: 'loan_application_ahmed.pdf',
-    type: 'pdf',
-    uploadDate: '2024-01-15',
-    status: 'completed',
-    extractedFields: 24,
-    confidence: 97,
-    size: '2.4 MB',
-  },
-  {
-    id: 'DOC-002',
-    name: 'id_card_front.jpg',
-    type: 'image',
-    uploadDate: '2024-01-15',
-    status: 'completed',
-    extractedFields: 8,
-    confidence: 95,
-    size: '1.2 MB',
-  },
-  {
-    id: 'DOC-003',
-    name: 'salary_slip_dec.pdf',
-    type: 'pdf',
-    uploadDate: '2024-01-14',
-    status: 'review',
-    extractedFields: 12,
-    confidence: 78,
-    size: '856 KB',
-  },
-  {
-    id: 'DOC-004',
-    name: 'bank_statement.xlsx',
-    type: 'excel',
-    uploadDate: '2024-01-14',
-    status: 'processing',
-    size: '4.1 MB',
-  },
-  {
-    id: 'DOC-005',
-    name: 'property_deed.pdf',
-    type: 'pdf',
-    uploadDate: '2024-01-13',
-    status: 'failed',
-    size: '12.3 MB',
-  },
-];
-
-const getDocTypeIcon = (type: Document['type']) => {
-  switch (type) {
+const getDocTypeIcon = (type: string) => {
+  switch (docTypeIconKey(type)) {
     case 'pdf': return FileText;
     case 'image': return FileImage;
     case 'excel': return FileSpreadsheet;
@@ -122,7 +70,7 @@ const getDocTypeIcon = (type: Document['type']) => {
   }
 };
 
-const getStatusBadge = (status: Document['status'], language: string) => {
+const getStatusBadge = (status: string, language: string) => {
   switch (status) {
     case 'completed':
       return (
@@ -138,11 +86,11 @@ const getStatusBadge = (status: Document['status'], language: string) => {
           {language === 'ar' ? 'قيد المعالجة' : 'Processing'}
         </Badge>
       );
-    case 'review':
+    case 'pending':
       return (
-        <Badge className="bg-warning/10 text-warning border-warning/20">
-          <AlertTriangle className="h-3 w-3 mr-1" />
-          {language === 'ar' ? 'يحتاج مراجعة' : 'Needs Review'}
+        <Badge className="bg-muted text-muted-foreground border-border">
+          <Clock className="h-3 w-3 mr-1" />
+          {language === 'ar' ? 'معلق' : 'Pending'}
         </Badge>
       );
     case 'failed':
@@ -150,6 +98,12 @@ const getStatusBadge = (status: Document['status'], language: string) => {
         <Badge className="bg-destructive/10 text-destructive border-destructive/20">
           <AlertTriangle className="h-3 w-3 mr-1" />
           {language === 'ar' ? 'فشل' : 'Failed'}
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="secondary">
+          {status || (language === 'ar' ? 'غير معروف' : 'Unknown')}
         </Badge>
       );
   }
@@ -194,6 +148,12 @@ export const Documents: React.FC = () => {
 
   const allowAccountOpening = canOpenAccount(role);
   const authz = { accessToken: session?.access_token ?? null, role };
+  const {
+    documents,
+    loading: documentsLoading,
+    error: documentsError,
+    reload: reloadDocuments,
+  } = useDocuments();
 
   // Best-effort audit trail (RLS lets users insert their own rows).
   const writeAccountAudit = async (
@@ -214,7 +174,6 @@ export const Documents: React.FC = () => {
     });
     if (error) console.warn('Audit log insert skipped:', error.message);
   };
-  const [documents, setDocuments] = useState<Document[]>(mockDocuments);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
@@ -572,26 +531,30 @@ export const Documents: React.FC = () => {
         authz
       );
 
-      // Step 5: insert the resulting record into the Documents table. The
-      // Total/Completed KPI counters derive from `documents`, so they update
-      // automatically.
-      const newDoc: Document = {
-        id: result.document_id ?? result.id ?? documentId ?? `DOC-${Date.now()}`,
-        name: result.file_name ?? `${baseName}_account_opening.pdf`,
-        type: 'pdf',
-        uploadDate: new Date().toISOString().split('T')[0],
-        status: 'completed',
-        extractedFields:
-          typeof result.extracted_fields === 'number'
-            ? result.extracted_fields
-            : confirmedFieldCount,
-        confidence:
-          typeof result.confidence === 'number'
-            ? result.confidence
-            : extractionConfidence || undefined,
-        size: idFile ? `${(idFile.size / 1024 / 1024).toFixed(1)} MB` : '—',
-      };
-      setDocuments((prev) => [newDoc, ...prev]);
+      // Persist completed account opening as a documents row (realtime will sync the table).
+      if (user?.id) {
+        try {
+          await insertDocument({
+            name: result.file_name ?? `${baseName}_account_opening.pdf`,
+            type: 'pdf',
+            file_path: documentId || null,
+            size: idFile ? `${(idFile.size / 1024 / 1024).toFixed(1)} MB` : null,
+            status: 'completed',
+            upload_date: new Date().toISOString().slice(0, 10),
+            user_id: user.id,
+            confidence:
+              typeof result.confidence === 'number'
+                ? result.confidence
+                : extractionConfidence || null,
+            extracted_fields:
+              typeof result.extracted_fields === 'number'
+                ? result.extracted_fields
+                : confirmedFieldCount,
+          });
+        } catch (insertErr) {
+          console.warn('Document row insert skipped:', insertErr);
+        }
+      }
 
       const ref =
         result.reference_id ??
@@ -666,55 +629,64 @@ export const Documents: React.FC = () => {
     handleFiles(files);
   };
 
-  const handleFiles = (files: File[]) => {
-    if (files.length === 0) return;
+  const handleFiles = async (files: File[]) => {
+    if (files.length === 0 || !user?.id) return;
 
     setIsUploading(true);
-    
-    // Simulate upload and processing
-    setTimeout(() => {
-      const newDocs: Document[] = files.map((file, index) => ({
-        id: `DOC-${Date.now()}-${index}`,
-        name: file.name,
-        type: file.name.endsWith('.pdf') ? 'pdf' : 
-              file.name.endsWith('.xlsx') ? 'excel' : 'image',
-        uploadDate: new Date().toISOString().split('T')[0],
-        status: 'processing' as const,
-        size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-      }));
+    const today = new Date().toISOString().slice(0, 10);
 
-      setDocuments(prev => [...newDocs, ...prev]);
-      setIsUploading(false);
-      
+    try {
+      for (const file of files) {
+        const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+        const type =
+          ext === 'pdf'
+            ? 'pdf'
+            : ext === 'xlsx' || ext === 'xls'
+              ? 'excel'
+              : 'image';
+
+        await insertDocument({
+          name: file.name,
+          type,
+          file_path: null, // TODO: set storage path when upload-to-storage is implemented
+          size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
+          status: 'processing',
+          upload_date: today,
+          user_id: user.id,
+          confidence: null,
+          extracted_fields: 0,
+        });
+      }
+
       toast.success(
         language === 'ar'
           ? `تم رفع ${files.length} ملفات بنجاح`
           : `${files.length} files uploaded successfully`
       );
-
-      // Simulate processing completion
-      setTimeout(() => {
-        setDocuments(prev => 
-          prev.map(doc => 
-            newDocs.some(nd => nd.id === doc.id)
-              ? { ...doc, status: 'completed' as const, extractedFields: 15, confidence: 92 }
-              : doc
-          )
-        );
-      }, 3000);
-    }, 1500);
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر رفع الملفات'
+            : 'Could not upload files'
+      );
+    } finally {
+      setIsUploading(false);
+    }
   };
 
-  const filteredDocuments = documents.filter(doc => {
+  const filteredDocuments = documents.filter((doc) => {
     if (activeTab === 'all') return true;
     return doc.status === activeTab;
   });
 
   const stats = {
     total: documents.length,
-    completed: documents.filter(d => d.status === 'completed').length,
-    processing: documents.filter(d => d.status === 'processing').length,
-    review: documents.filter(d => d.status === 'review').length,
+    completed: documents.filter((d) => d.status === 'completed').length,
+    processing: documents.filter((d) => d.status === 'processing').length,
+    pending: documents.filter((d) => d.status === 'pending').length,
+    failed: documents.filter((d) => d.status === 'failed').length,
   };
 
   return (
@@ -1403,8 +1375,10 @@ export const Documents: React.FC = () => {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">{t('docs.review')}</p>
-                  <p className="text-2xl font-bold text-warning">{stats.review}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'ar' ? 'معلق' : 'Pending'}
+                  </p>
+                  <p className="text-2xl font-bold text-warning">{stats.pending}</p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-warning opacity-50" />
               </div>
@@ -1473,6 +1447,19 @@ export const Documents: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {documentsError && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>{language === 'ar' ? 'تعذّر تحميل المستندات' : 'Could not load documents'}</AlertTitle>
+                <AlertDescription className="flex flex-col gap-2">
+                  <span>{documentsError}</span>
+                  <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => reloadDocuments()}>
+                    {language === 'ar' ? 'إعادة المحاولة' : 'Try again'}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
               <TabsList>
                 <TabsTrigger value="all">
@@ -1484,8 +1471,11 @@ export const Documents: React.FC = () => {
                 <TabsTrigger value="processing">
                   {t('docs.processing')} ({stats.processing})
                 </TabsTrigger>
-                <TabsTrigger value="review">
-                  {t('docs.review')} ({stats.review})
+                <TabsTrigger value="pending">
+                  {language === 'ar' ? 'معلق' : 'Pending'} ({stats.pending})
+                </TabsTrigger>
+                <TabsTrigger value="failed">
+                  {language === 'ar' ? 'فشل' : 'Failed'} ({stats.failed})
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -1493,72 +1483,102 @@ export const Documents: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{language === 'ar' ? 'الملف' : 'File'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'الحجم' : 'Size'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'التاريخ' : 'Date'}</TableHead>
+                  <TableHead>{language === 'ar' ? 'المستند' : 'Document'}</TableHead>
+                  <TableHead>{language === 'ar' ? 'النوع' : 'Type'}</TableHead>
                   <TableHead>{language === 'ar' ? 'الحالة' : 'Status'}</TableHead>
+                  <TableHead>{language === 'ar' ? 'تاريخ الرفع' : 'Upload Date'}</TableHead>
                   <TableHead>{language === 'ar' ? 'الحقول المستخرجة' : 'Extracted Fields'}</TableHead>
                   <TableHead>{language === 'ar' ? 'الثقة' : 'Confidence'}</TableHead>
+                  <TableHead>{language === 'ar' ? 'الحجم' : 'Size'}</TableHead>
                   <TableHead>{language === 'ar' ? 'الإجراءات' : 'Actions'}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredDocuments.map((doc) => {
-                  const Icon = getDocTypeIcon(doc.type);
-                  return (
-                    <TableRow key={doc.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-muted">
-                            <Icon className="h-5 w-5 text-muted-foreground" />
-                          </div>
-                          <span className="font-medium truncate max-w-[200px]">{doc.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{doc.size}</TableCell>
-                      <TableCell className="text-muted-foreground">{doc.uploadDate}</TableCell>
-                      <TableCell>{getStatusBadge(doc.status, language)}</TableCell>
-                      <TableCell>
-                        {doc.extractedFields ? (
-                          <span className="font-medium">{doc.extractedFields}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {doc.confidence ? (
-                          <div className="flex items-center gap-2">
-                            <Progress 
-                              value={doc.confidence} 
-                              className={cn(
-                                "w-16 h-2",
-                                doc.confidence >= 90 && "[&>div]:bg-success",
-                                doc.confidence >= 70 && doc.confidence < 90 && "[&>div]:bg-warning",
-                                doc.confidence < 70 && "[&>div]:bg-destructive"
-                              )}
-                            />
-                            <span className="text-sm font-medium">{doc.confidence}%</span>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                {documentsLoading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={`skeleton-${i}`}>
+                      {Array.from({ length: 8 }).map((__, j) => (
+                        <TableCell key={j}>
+                          <div className="h-4 w-full max-w-[120px] animate-pulse rounded bg-muted" />
+                        </TableCell>
+                      ))}
                     </TableRow>
-                  );
-                })}
+                  ))
+                ) : filteredDocuments.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                      {language === 'ar' ? 'لا توجد مستندات مرفوعة بعد' : 'No uploaded documents yet'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredDocuments.map((doc) => {
+                    const Icon = getDocTypeIcon(doc.type);
+                    const confidencePct = confidenceToPercent(doc.confidence);
+                    return (
+                      <TableRow key={doc.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-muted">
+                              <Icon className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <span className="font-medium truncate max-w-[200px]">{doc.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground capitalize">{doc.type}</TableCell>
+                        <TableCell>{getStatusBadge(doc.status, language)}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatDocumentDate(doc, language)}
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-medium">{doc.extracted_fields ?? 0}</span>
+                        </TableCell>
+                        <TableCell>
+                          {confidencePct != null ? (
+                            <div className="flex items-center gap-2">
+                              <Progress
+                                value={confidencePct}
+                                className={cn(
+                                  'w-16 h-2',
+                                  confidencePct >= 90 && '[&>div]:bg-success',
+                                  confidencePct >= 70 && confidencePct < 90 && '[&>div]:bg-warning',
+                                  confidencePct < 70 && '[&>div]:bg-destructive'
+                                )}
+                              />
+                              <span className="text-sm font-medium">{formatConfidence(doc.confidence)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{doc.size ?? '—'}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            {/* TODO: open signed URL from doc.file_path when storage viewer is wired */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title={language === 'ar' ? 'عرض' : 'View'}
+                              disabled={!doc.file_path}
+                              onClick={() => {
+                                if (doc.file_path) {
+                                  window.open(doc.file_path, '_blank', 'noopener,noreferrer');
+                                }
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" disabled title="Download">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="text-destructive" disabled title="Delete">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
           </CardContent>
