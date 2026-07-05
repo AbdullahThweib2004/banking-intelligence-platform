@@ -97,6 +97,31 @@ export interface ExtractFieldsResponse extends ExtractedFields {
   extraction_source?: 'regex' | 'regex+llm' | 'llm';
   llm_fallback_attempted?: boolean;
   extraction_warnings?: string[];
+  /** Detected form language from raw OCR text (ar | en). */
+  language?: 'ar' | 'en';
+  ocr_language?: string;
+}
+
+export interface GenerateFormPayload {
+  language?: 'ar' | 'en';
+  first_name: string;
+  last_name: string;
+  date_of_birth: string;
+  id_number: string;
+  father_name?: string;
+  mother_name?: string;
+  customer_signature?: string | null;
+  employee_signature?: string | null;
+  staff_signature?: string | null;
+  return_format?: 'download' | 'base64';
+}
+
+export interface GenerateFormBase64Response {
+  document_id: string;
+  filename: string;
+  content_type: string;
+  pdf_base64: string;
+  size_bytes: number;
 }
 
 /** Step 2 — run field extraction for a previously uploaded document. */
@@ -130,7 +155,24 @@ export interface OpenAccountResponse {
   extracted_fields?: number;
 }
 
-/** Step 3 — submit the confirmed fields to open the account. */
+/** Sign & Print — render two-copy account-opening PDF with embedded signatures. */
+export async function generateAccountForm(
+  documentId: string,
+  payload: GenerateFormPayload,
+  authz: AccountAuthz
+): Promise<GenerateFormBase64Response> {
+  assertCanOpenAccount(authz.role);
+  return requestJson<GenerateFormBase64Response>(
+    `/documents/${encodeURIComponent(documentId)}/generate-form`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders(authz) },
+      body: JSON.stringify({ ...payload, return_format: 'base64' }),
+    }
+  );
+}
+
+/** Step 4 — submit the confirmed fields to open the account. */
 export async function openNewAccount(
   payload: OpenAccountPayload,
   authz: AccountAuthz

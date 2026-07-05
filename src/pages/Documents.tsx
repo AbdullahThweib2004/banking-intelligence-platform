@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,13 +40,15 @@ import {
   ArrowRight,
   ArrowLeft,
   ScanLine,
+  Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { extractId, extractFields, openNewAccount } from '@/lib/accountApi';
+import { extractId, extractFields, generateAccountForm, openNewAccount } from '@/lib/accountApi';
+import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { useAuth } from '@/contexts/AuthContext';
 import { canOpenAccount } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
@@ -235,11 +237,26 @@ export const Documents: React.FC = () => {
   const [autoFilledFields, setAutoFilledFields] = useState<string[]>([]);
   const [extractionConfidence, setExtractionConfidence] = useState(0);
   const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
+  const [detectedFormLanguage, setDetectedFormLanguage] = useState<'ar' | 'en'>('en');
   const [accountSubmitted, setAccountSubmitted] = useState(false);
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null);
+  const [generatedPdfFilename, setGeneratedPdfFilename] = useState('account_opening.pdf');
+  const customerSigRef = useRef<SignaturePadHandle>(null);
+  const staffSigRef = useRef<SignaturePadHandle>(null);
+
+  const revokePdfUrl = useCallback((url: string | null) => {
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+
+  useEffect(() => {
+    return () => revokePdfUrl(generatedPdfUrl);
+  }, [generatedPdfUrl, revokePdfUrl]);
 
   const handleAccountFieldChange = (
     field: keyof typeof emptyAccountForm,
@@ -259,11 +276,21 @@ export const Documents: React.FC = () => {
     setAutoFilledFields([]);
     setExtractionConfidence(0);
     setExtractionWarnings([]);
+    setDetectedFormLanguage('en');
     setAccountSubmitted(false);
     setReferenceId('');
     setDocumentId('');
     setSubmitting(false);
     setSubmitError(null);
+    setGeneratingPdf(false);
+    setGenerateError(null);
+    setGeneratedPdfUrl((prev) => {
+      revokePdfUrl(prev);
+      return null;
+    });
+    setGeneratedPdfFilename('account_opening.pdf');
+    customerSigRef.current?.clear();
+    staffSigRef.current?.clear();
     setAccountForm(emptyAccountForm);
   };
 
@@ -361,6 +388,9 @@ export const Documents: React.FC = () => {
           ? data.extraction_warnings.filter((w): w is string => typeof w === 'string' && w.trim() !== '')
           : []
       );
+      if (data.language === 'ar' || data.language === 'en') {
+        setDetectedFormLanguage(data.language);
+      }
 
       await writeAccountAudit(
         'account_opening_extract',
@@ -398,7 +428,7 @@ export const Documents: React.FC = () => {
       </Badge>
     ) : null;
 
-  const goToCompleteStep = (e: React.FormEvent) => {
+  const goToSignStep = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isReviewValid) {
       toast.error(
@@ -409,6 +439,103 @@ export const Documents: React.FC = () => {
       return;
     }
     setAccountStep(3);
+  };
+
+  const handleGenerateForm = async () => {
+    if (!documentId || generatingPdf) return;
+    setGenerateError(null);
+
+    if (customerSigRef.current?.isEmpty()) {
+      toast.error(
+        language === 'ar'
+          ? 'توقيع العميل مطلوب — ارسم التوقيع على اللوحة'
+          : 'Customer signature is required — please draw on the pad'
+      );
+      return;
+    }
+
+    if (staffSigRef.current?.isEmpty()) {
+      toast.error(
+        language === 'ar'
+          ? 'توقيع الموظف مطلوب — ارسم أو اكتب الاسم'
+          : 'Employee signature is required — draw or type your name'
+      );
+      return;
+    }
+
+    setGeneratingPdf(true);
+    try {
+      const result = await generateAccountForm(
+        documentId,
+        {
+          language: detectedFormLanguage,
+          first_name: accountForm.firstName.trim(),
+          last_name: accountForm.lastName.trim(),
+          date_of_birth: accountForm.dateOfBirth.trim(),
+          id_number: accountForm.idNumber.trim(),
+          father_name: accountForm.fatherName.trim(),
+          mother_name: accountForm.motherName.trim(),
+          customer_signature: customerSigRef.current?.getDataUrl() ?? null,
+          employee_signature: staffSigRef.current?.getDataUrl() ?? null,
+        },
+        authz
+      );
+
+      const binary = atob(result.pdf_base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+
+      revokePdfUrl(generatedPdfUrl);
+      setGeneratedPdfUrl(URL.createObjectURL(blob));
+      setGeneratedPdfFilename(result.filename ?? 'account_opening.pdf');
+
+      await writeAccountAudit(
+        'account_opening_generate_form',
+        documentId,
+        `Generated account opening PDF (${result.size_bytes} bytes)`
+      );
+
+      toast.success(
+        language === 'ar' ? 'تم إنشاء النموذج بنجاح' : 'Form generated successfully'
+      );
+    } catch (err) {
+      setGenerateError(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر إنشاء النموذج. حاول مرة أخرى.'
+            : 'Could not generate the form. Please try again.'
+      );
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  const handleDownloadPdf = () => {
+    if (!generatedPdfUrl) return;
+    const anchor = document.createElement('a');
+    anchor.href = generatedPdfUrl;
+    anchor.download = generatedPdfFilename;
+    anchor.click();
+  };
+
+  const handlePrintPdf = () => {
+    if (!generatedPdfUrl) return;
+    const printWindow = window.open(generatedPdfUrl, '_blank');
+    printWindow?.addEventListener('load', () => printWindow.print());
+  };
+
+  const goToCompleteStep = () => {
+    if (!generatedPdfUrl) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى إنشاء النموذج أولاً'
+          : 'Please generate the form first'
+      );
+      return;
+    }
+    setAccountStep(4);
   };
 
   const handleCompleteProcess = async () => {
@@ -681,7 +808,7 @@ export const Documents: React.FC = () => {
           open={accountModalOpen}
           onOpenChange={(open) => (open ? setAccountModalOpen(true) : closeAccountModal())}
         >
-            <DialogContent className="sm:max-w-lg">
+            <DialogContent className={cn('sm:max-w-lg', accountStep >= 3 && 'sm:max-w-2xl max-h-[90vh] overflow-y-auto')}>
               <DialogHeader>
                 <DialogTitle>
                   {language === 'ar' ? 'فتح حساب جديد' : 'Open New Account'}
@@ -698,7 +825,8 @@ export const Documents: React.FC = () => {
                 {[
                   { n: 1, label: language === 'ar' ? 'رفع الهوية' : 'Upload ID' },
                   { n: 2, label: language === 'ar' ? 'مراجعة البيانات' : 'Review Data' },
-                  { n: 3, label: language === 'ar' ? 'اكتمال' : 'Complete' },
+                  { n: 3, label: language === 'ar' ? 'توقيع وإنشاء النموذج' : 'Sign & Generate Form' },
+                  { n: 4, label: language === 'ar' ? 'اكتمال' : 'Complete' },
                 ].map((s, i, arr) => (
                   <React.Fragment key={s.n}>
                     <div className="flex flex-col items-center gap-1.5">
@@ -873,7 +1001,7 @@ export const Documents: React.FC = () => {
 
                   <form
                     id="review-account-form"
-                    onSubmit={goToCompleteStep}
+                    onSubmit={goToSignStep}
                     className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                   >
                     <div className="space-y-2">
@@ -975,8 +1103,109 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 3: Complete */}
-              {accountStep === 3 &&
+              {/* Step 3: Sign & Print */}
+              {accountStep === 3 && (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'ar'
+                      ? 'اجمع توقيع العميل والموظف ثم أنشئ النموذج (نسخة البنك + نسخة العميل)'
+                      : 'Collect customer and employee signatures, then generate the form (bank + customer copies)'}
+                  </p>
+
+                  <SignaturePad
+                    ref={customerSigRef}
+                    label={language === 'ar' ? 'توقيع العميل' : 'Customer Signature'}
+                    hint={
+                      language === 'ar'
+                        ? 'يجب رسم التوقيع بالماوس أو اللمس'
+                        : 'Must be drawn with mouse or touch'
+                    }
+                    required
+                    disabled={generatingPdf}
+                  />
+
+                  <SignaturePad
+                    ref={staffSigRef}
+                    label={language === 'ar' ? 'توقيع الموظف' : 'Employee Signature'}
+                    hint={
+                      language === 'ar'
+                        ? 'ارسم التوقيع أو اختر "كتابة الاسم"'
+                        : 'Draw your signature or switch to "Type name"'
+                    }
+                    allowTypedName
+                    typedNamePlaceholder={profile?.full_name ?? ''}
+                    required
+                    disabled={generatingPdf}
+                  />
+
+                  {generateError && (
+                    <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                      <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                      <p className="text-sm text-destructive">{generateError}</p>
+                    </div>
+                  )}
+
+                  {!generatedPdfUrl ? (
+                    <Button
+                      type="button"
+                      className="w-full gradient-bg gap-2"
+                      onClick={handleGenerateForm}
+                      disabled={generatingPdf}
+                    >
+                      {generatingPdf ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {language === 'ar' ? 'جارٍ إنشاء النموذج...' : 'Generating form...'}
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="h-4 w-4" />
+                          {language === 'ar' ? 'إنشاء النموذج' : 'Generate Form'}
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={handleDownloadPdf}>
+                          <Download className="h-4 w-4" />
+                          {language === 'ar' ? 'تنزيل PDF' : 'Download PDF'}
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={handlePrintPdf}>
+                          <Printer className="h-4 w-4" />
+                          {language === 'ar' ? 'طباعة' : 'Print'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            revokePdfUrl(generatedPdfUrl);
+                            setGeneratedPdfUrl(null);
+                          }}
+                        >
+                          {language === 'ar' ? 'إعادة إنشاء' : 'Regenerate'}
+                        </Button>
+                      </div>
+                      <div className="rounded-lg border border-border overflow-hidden bg-muted/20">
+                        <iframe
+                          title={language === 'ar' ? 'معاينة النموذج' : 'Form preview'}
+                          src={generatedPdfUrl}
+                          className="w-full h-[min(420px,50vh)] bg-white"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground text-center">
+                        {language === 'ar'
+                          ? 'الصفحتان: نسخة البنك ونسخة العميل'
+                          : 'Two pages: bank copy and customer copy'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 4: Complete */}
+              {accountStep === 4 &&
                 (accountSubmitted ? (
                   <div className="flex flex-col items-center text-center gap-4 py-4">
                     <div className="p-4 rounded-full bg-success/10">
@@ -1033,20 +1262,20 @@ export const Documents: React.FC = () => {
 
               {/* Footer actions */}
               <div className="flex items-center justify-between gap-2 pt-2">
-                {accountStep < 3 ? (
+                {accountStep < 4 ? (
                   <Button
                     type="button"
                     variant="outline"
                     onClick={closeAccountModal}
-                    disabled={extracting}
+                    disabled={extracting || generatingPdf}
                   >
                     {language === 'ar' ? 'إلغاء' : 'Cancel'}
                   </Button>
-                ) : accountStep === 3 && !accountSubmitted ? (
+                ) : accountStep === 4 && !accountSubmitted ? (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setAccountStep(2)}
+                    onClick={() => setAccountStep(3)}
                     disabled={submitting}
                   >
                     {language === 'ar' ? 'رجوع' : 'Back'}
@@ -1058,6 +1287,11 @@ export const Documents: React.FC = () => {
                 <div className="flex gap-2">
                   {accountStep === 2 && (
                     <Button type="button" variant="outline" onClick={() => setAccountStep(1)}>
+                      {language === 'ar' ? 'رجوع' : 'Back'}
+                    </Button>
+                  )}
+                  {accountStep === 3 && (
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(2)} disabled={generatingPdf}>
                       {language === 'ar' ? 'رجوع' : 'Back'}
                     </Button>
                   )}
@@ -1092,7 +1326,13 @@ export const Documents: React.FC = () => {
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 3 && !accountSubmitted && (
+                  {accountStep === 3 && generatedPdfUrl && (
+                    <Button type="button" className="gradient-bg gap-2" onClick={goToCompleteStep}>
+                      {language === 'ar' ? 'متابعة' : 'Continue'}
+                      <StartArrow className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {accountStep === 4 && !accountSubmitted && (
                     <Button
                       type="button"
                       className="gradient-bg gap-2"
@@ -1112,7 +1352,7 @@ export const Documents: React.FC = () => {
                       )}
                     </Button>
                   )}
-                  {accountStep === 3 && accountSubmitted && (
+                  {accountStep === 4 && accountSubmitted && (
                     <Button type="button" className="gradient-bg" onClick={closeAccountModal}>
                       {language === 'ar' ? 'إغلاق' : 'Close'}
                     </Button>

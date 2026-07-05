@@ -3,9 +3,12 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from services.auth import require_account_opening_role
 from services.field_extraction import extract_all_fields
+from services.form_generator import FormFields, SignaturePayload, generate_account_opening_pdf
 from services.ocr import run_ocr
 from services.store import create_document, get_document
 
@@ -135,6 +138,102 @@ async def extract_fields(
         "extraction_source": parsed.extraction_source,
         "llm_fallback_attempted": outcome.llm_fallback_attempted,
         "extraction_warnings": outcome.warnings,
-        "language": doc.language,
+        "language": outcome.language,
+        "ocr_language": doc.language,
         "raw_text": doc.raw_text,
     }
+
+
+class GenerateFormRequest(BaseModel):
+    """Fields from a prior /extract-fields call (may be edited in the UI)."""
+
+    language: str | None = Field(
+        default=None,
+        description="Force template language: ar or en. Auto-detected from raw_text when omitted.",
+    )
+    first_name: str = Field(min_length=1)
+    last_name: str = Field(min_length=1)
+    date_of_birth: str = Field(min_length=1)
+    id_number: str = Field(min_length=1)
+    father_name: str = ""
+    mother_name: str = ""
+    customer_signature: str | None = Field(
+        default=None,
+        description="PNG signature — base64 or data URI from UI canvas.",
+    )
+    employee_signature: str | None = Field(
+        default=None,
+        description="PNG signature — base64 or data URI from UI canvas.",
+    )
+    staff_signature: str | None = Field(
+        default=None,
+        description="Alias for employee_signature (deprecated).",
+    )
+    return_format: str = Field(
+        default="download",
+        description='Return as file download ("download") or JSON base64 ("base64").',
+    )
+
+
+@router.post("/{document_id}/generate-form")
+async def generate_form(
+    document_id: str,
+    body: GenerateFormRequest,
+    _role: str = Depends(require_account_opening_role),
+):
+    """Render a two-copy account-opening PDF (bank + customer) from extracted fields."""
+    doc = get_document(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    lang = body.language.lower() if body.language else None
+    if lang is not None and lang not in ("ar", "en"):
+        raise HTTPException(status_code=400, detail="language must be 'ar' or 'en'.")
+
+    fields = FormFields(
+        first_name=body.first_name.strip(),
+        last_name=body.last_name.strip(),
+        date_of_birth=body.date_of_birth.strip(),
+        id_number=body.id_number.strip(),
+        father_name=body.father_name.strip(),
+        mother_name=body.mother_name.strip(),
+    )
+
+    employee_sig = body.employee_signature or body.staff_signature
+
+    try:
+        pdf_bytes = generate_account_opening_pdf(
+            document_id=document_id,
+            raw_text=doc.raw_text,
+            fields=fields,
+            language=lang,  # type: ignore[arg-type]
+            signatures=SignaturePayload(
+                customer_signature=body.customer_signature,
+                employee_signature=employee_sig,
+            ),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[generate-form] failed document_id=%s", document_id)
+        raise HTTPException(status_code=500, detail="Could not generate the account opening form.") from exc
+
+    filename = f"account_opening_{document_id}.pdf"
+    logger.info("[generate-form] document_id=%s bytes=%d format=%s", document_id, len(pdf_bytes), body.return_format)
+
+    if body.return_format == "base64":
+        import base64
+
+        return {
+            "document_id": document_id,
+            "filename": filename,
+            "content_type": "application/pdf",
+            "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "size_bytes": len(pdf_bytes),
+        }
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -21,6 +21,10 @@ export default defineConfig(({ mode }) => ({
         target: API_TARGET,
         changeOrigin: true,
       },
+      "^/documents/[^/]+/generate-form$": {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
       "/accounts/open-new": {
         target: API_TARGET,
         changeOrigin: true,

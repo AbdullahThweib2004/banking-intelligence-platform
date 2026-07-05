@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ strings.title }}</title>
+  <style>
+    @page { size: A4; margin: 1.8cm 1.5cm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'DejaVu Sans', sans-serif;
+      font-size: 11pt;
+      color: #111;
+      line-height: 1.45;
+      direction: ltr;
+      text-align: left;
+    }
+    .copy-page { page-break-after: always; position: relative; min-height: 24cm; }
+    .copy-page:last-child { page-break-after: auto; }
+    .copy-banner {
+      text-align: center; font-weight: bold; font-size: 13pt; letter-spacing: 0.08em;
+      color: #fff; background: #1a365d; padding: 8px 12px; margin-bottom: 18px; border-radius: 4px;
+    }
+    .copy-watermark {
+      position: absolute; top: 42%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-32deg);
+      font-size: 52pt; color: rgba(26, 54, 93, 0.06); font-weight: bold;
+      white-space: nowrap; z-index: 0;
+    }
+    .content { position: relative; z-index: 1; }
+    .header { border-bottom: 2px solid #1a365d; padding-bottom: 10px; margin-bottom: 16px; }
+    .header h1 { margin: 0 0 4px; font-size: 18pt; color: #1a365d; }
+    .header p { margin: 0; color: #444; font-size: 10pt; }
+    .meta { margin-bottom: 14px; font-size: 10pt; color: #555; }
+    .salutation { margin: 12px 0 16px; font-size: 12pt; }
+    table.fields { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    table.fields th, table.fields td {
+      border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top;
+    }
+    table.fields th { width: 34%; background: #f1f5f9; font-weight: 600; }
+    .terms {
+      margin: 16px 0; padding: 12px; border: 1px solid #e2e8f0;
+      background: #f8fafc; border-radius: 4px; font-size: 9.5pt;
+    }
+    .terms h2 { margin: 0 0 8px; font-size: 11pt; color: #1a365d; }
+    .terms-pending {
+      color: #64748b; font-style: italic; border-left: 3px solid #f59e0b;
+      padding-left: 10px; margin: 0;
+    }
+    .signatures { margin-top: 20px; display: table; width: 100%; }
+    .sig-block { display: table-cell; width: 50%; vertical-align: top; padding-right: 12px; }
+    .sig-block:last-child { padding-right: 0; padding-left: 12px; }
+    .sig-label { font-weight: 600; margin-bottom: 6px; font-size: 10.5pt; }
+    .signature-box {
+      border: 1.5px dashed #64748b; border-radius: 4px; height: 88px; width: 100%;
+      background: #fafafa; text-align: center; line-height: 88px; overflow: hidden;
+    }
+    .signature-box img { max-height: 84px; max-width: 100%; vertical-align: middle; }
+    .signature-placeholder { color: #94a3b8; font-size: 9pt; font-style: italic; line-height: normal; display: inline-block; vertical-align: middle; }
+    .footer { margin-top: 20px; font-size: 9pt; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  </style>
+</head>
+<body>
+  {% for copy in copies %}
+  <section class="copy-page">
+    <div class="copy-watermark">{{ copy.watermark }}</div>
+    <div class="content">
+      <div class="copy-banner">{{ copy.label }}</div>
+      <div class="header">
+        <h1>{{ strings.bank_name }}</h1>
+        <p>{{ strings.form_title }}</p>
+      </div>
+      <div class="meta">
+        <div>{{ strings.document_id }}: {{ document_id }}</div>
+        <div>{{ strings.generated_at }}: {{ generated_at }}</div>
+      </div>
+      <p class="salutation">{{ salutation_line }}</p>
+      <p>{{ strings.intro }}</p>
+      <table class="fields">
+        <tbody>
+          <tr><th>{{ strings.first_name }}</th><td>{{ first_name }}</td></tr>
+          <tr><th>{{ strings.last_name }}</th><td>{{ last_name }}</td></tr>
+          <tr><th>{{ strings.date_of_birth }}</th><td>{{ date_of_birth }}</td></tr>
+          <tr><th>{{ strings.id_number }}</th><td>{{ id_number }}</td></tr>
+          {% if father_name %}<tr><th>{{ strings.father_name }}</th><td>{{ father_name }}</td></tr>{% endif %}
+          {% if mother_name %}<tr><th>{{ strings.mother_name }}</th><td>{{ mother_name }}</td></tr>{% endif %}
+        </tbody>
+      </table>
+      <p>{{ strings.declaration }}</p>
+      <section class="terms">
+        <h2>{{ strings.terms_heading }}</h2>
+        <p class="terms-pending">{{ strings.terms_pending }}</p>
+      </section>
+      <div class="signatures">
+        <div class="sig-block">
+          <div class="sig-label">{{ strings.customer_signature }}</div>
+          <div class="signature-box">
+            {% if customer_signature_data_uri %}
+            <img src="{{ customer_signature_data_uri }}" alt="Customer signature" />
+            {% else %}
+            <span class="signature-placeholder">{{ strings.sign_here }}</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="sig-block">
+          <div class="sig-label">{{ strings.employee_signature }}</div>
+          <div class="signature-box">
+            {% if employee_signature_data_uri %}
+            <img src="{{ employee_signature_data_uri }}" alt="Employee signature" />
+            {% else %}
+            <span class="signature-placeholder">{{ strings.sign_here }}</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="footer">{{ strings.footer }}</div>
+    </div>
+  </section>
+  {% endfor %}
+</body>
+</html>

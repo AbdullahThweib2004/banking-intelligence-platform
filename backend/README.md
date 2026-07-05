@@ -8,6 +8,7 @@ Backend for the **Open New Account** wizard on the Documents page.
 |--------|------|-------------|
 | `POST` | `/documents/extract-id` | Upload ID image → preprocess → **Tesseract OCR** → `{ document_id, raw_text, language, ocr_confidence }` |
 | `POST` | `/documents/{document_id}/extract-fields` | Parse fields from the **stored OCR text** for that document |
+| `POST` | `/documents/{document_id}/generate-form` | Render two-copy account-opening PDF (bank + customer) |
 | `POST` | `/accounts/open-new` | Submit confirmed fields |
 | `GET` | `/docs` | Swagger UI |
 
@@ -23,6 +24,16 @@ sudo pacman -S tesseract tesseract-data-eng tesseract-data-ara
 
 # Debian/Ubuntu
 sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara
+```
+
+**WeasyPrint** (PDF form generation) requires additional system libraries:
+
+```bash
+# Arch Linux
+sudo pacman -S pango cairo gdk-pixbuf2
+
+# Debian/Ubuntu
+sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0
 ```
 
 ## Environment variables

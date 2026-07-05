@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from services.field_parser import (
@@ -20,15 +21,26 @@ logger = logging.getLogger(__name__)
 LLM_FALLBACK_MIN_FIELDS = 4
 
 
+def detect_document_language(raw_text: str) -> str:
+    arabic_chars = sum(1 for c in raw_text if "\u0600" <= c <= "\u06FF")
+    total_chars = len(re.findall(r"\S", raw_text))
+    if total_chars == 0:
+        return "en"
+    return "ar" if arabic_chars / total_chars > 0.3 else "en"
+
+
 @dataclass
 class ExtractionOutcome:
     fields: ParsedFields
+    language: str
     warnings: list[str] = field(default_factory=list)
     llm_fallback_attempted: bool = False
     regex_field_count: int = 0
 
 
 def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> ExtractionOutcome:
+    doc_language = detect_document_language(raw_text)
+    logger.info("[field extraction] detected language=%s", doc_language)
     logger.info(
         "[field extraction] raw_text before parsing (%d chars):\n%s",
         len(raw_text),
@@ -54,6 +66,7 @@ def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> Extraction
         )
         return ExtractionOutcome(
             fields=regex_fields,
+            language=doc_language,
             warnings=[],
             llm_fallback_attempted=False,
             regex_field_count=filled,
@@ -79,6 +92,7 @@ def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> Extraction
             )
         return ExtractionOutcome(
             fields=regex_fields,
+            language=doc_language,
             warnings=warnings,
             llm_fallback_attempted=True,
             regex_field_count=filled,
@@ -96,6 +110,7 @@ def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> Extraction
     )
     return ExtractionOutcome(
         fields=merged,
+        language=doc_language,
         warnings=[],
         llm_fallback_attempted=True,
         regex_field_count=filled,
