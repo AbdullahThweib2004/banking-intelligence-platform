@@ -189,8 +189,6 @@ export const Documents: React.FC = () => {
     });
     if (error) console.warn('Audit log insert skipped:', error.message);
   };
-  const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
   const [docToDelete, setDocToDelete] = useState<DocumentRecord | null>(null);
@@ -700,78 +698,6 @@ export const Documents: React.FC = () => {
       optional: true,
     },
   ];
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    const files = Array.from(e.dataTransfer.files);
-    handleFiles(files);
-  }, []);
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files ? Array.from(e.target.files) : [];
-    handleFiles(files);
-  };
-
-  const handleFiles = async (files: File[]) => {
-    if (files.length === 0 || !user?.id) return;
-
-    setIsUploading(true);
-    const today = new Date().toISOString().slice(0, 10);
-
-    try {
-      for (const file of files) {
-        const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-        const type =
-          ext === 'pdf'
-            ? 'pdf'
-            : ext === 'xlsx' || ext === 'xls'
-              ? 'excel'
-              : 'image';
-
-        const storagePath = await uploadDocumentToStorage(user.id, file, file.name, file.type);
-
-        await insertDocument({
-          name: file.name,
-          type,
-          file_path: storagePath,
-          size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-          status: 'processing',
-          upload_date: today,
-          user_id: user.id,
-          confidence: null,
-          extracted_fields: 0,
-        });
-      }
-
-      toast.success(
-        language === 'ar'
-          ? `تم رفع ${files.length} ملفات بنجاح`
-          : `${files.length} files uploaded successfully`
-      );
-    } catch (err) {
-      toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : language === 'ar'
-            ? 'تعذّر رفع الملفات'
-            : 'Could not upload files'
-      );
-    } finally {
-      setIsUploading(false);
-    }
-  };
 
   const filteredDocuments = documents.filter((doc) => {
     if (activeTab === 'all') return true;
@@ -1482,56 +1408,6 @@ export const Documents: React.FC = () => {
             </CardContent>
           </Card>
         </div>
-
-        {/* Upload Area */}
-        <Card>
-          <CardContent className="p-6">
-            <div
-              className={cn(
-                "border-2 border-dashed rounded-xl p-8 text-center transition-all",
-                isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
-                isUploading && "pointer-events-none opacity-60"
-              )}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              {isUploading ? (
-                <div className="flex flex-col items-center gap-4">
-                  <Loader2 className="h-12 w-12 text-primary animate-spin" />
-                  <p className="text-muted-foreground">
-                    {language === 'ar' ? 'جاري رفع الملفات...' : 'Uploading files...'}
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    {language === 'ar' ? 'اسحب وأفلت الملفات هنا' : 'Drag and drop files here'}
-                  </h3>
-                  <p className="text-muted-foreground mb-4">
-                    {language === 'ar' 
-                      ? 'أو اضغط لاختيار الملفات (PDF, JPG, PNG, Excel)' 
-                      : 'or click to browse (PDF, JPG, PNG, Excel)'}
-                  </p>
-                  <input
-                    type="file"
-                    id="file-upload"
-                    className="hidden"
-                    multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls"
-                    onChange={handleFileInput}
-                  />
-                  <label htmlFor="file-upload">
-                    <Button asChild className="gradient-bg">
-                      <span>{t('docs.upload')}</span>
-                    </Button>
-                  </label>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Documents Table */}
         <Card>
