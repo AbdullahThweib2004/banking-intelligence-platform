@@ -12,16 +12,29 @@ Swagger UI: http://localhost:8000/docs
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load repo-root .env before any service reads process env.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import accounts, documents
+from services.llm_extractor import llm_fallback_configured
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+if not llm_fallback_configured():
+    logging.getLogger(__name__).warning(
+        "OPENROUTER_API_KEY is not set — LLM field-extraction fallback is disabled. "
+        "Set this in dev (.env), staging, and production host env / secrets."
+    )
 
 app = FastAPI(
     title="BoP Document OCR API",
@@ -43,4 +56,7 @@ app.include_router(accounts.router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "llm_fallback_configured": llm_fallback_configured(),
+    }

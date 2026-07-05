@@ -25,6 +25,33 @@ sudo pacman -S tesseract tesseract-data-eng tesseract-data-ara
 sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara
 ```
 
+## Environment variables
+
+Set these in **every environment** where account opening runs (local, staging, production).
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` | **Recommended** | OpenRouter API key for LLM field-extraction fallback when regex fills fewer than 4 of 6 fields. Without it, extraction falls back to regex-only and returns `extraction_warnings` to the UI. |
+| `ID_EXTRACT_MODEL` | Optional | OpenRouter model id (default: `openai/gpt-4o-mini`) |
+| `OPENROUTER_HTTP_REFERER` | Optional | Referer header for OpenRouter (default: `http://localhost:8080`) |
+
+### Where to configure
+
+| Environment | How to set |
+|-------------|------------|
+| **Local dev** | Repo-root `.env` (loaded automatically by `main.py`) |
+| **Staging / Production** | Host environment variables or secrets manager (e.g. Railway, Render, Fly.io secrets, Kubernetes `Secret`, systemd `EnvironmentFile`) — **do not rely on `.env` in deployed builds** |
+
+The server logs a startup warning if `OPENROUTER_API_KEY` is missing.
+
+Supabase Edge Functions (`credit-assessment`, `policy-search`) use the same key via:
+
+```bash
+supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+The FastAPI backend reads it from the process environment — configure it separately on whatever hosts port 8000.
+
 ## Setup
 
 ```bash
@@ -39,21 +66,15 @@ From repo root: `npm run dev:api` (runs the same server on port 8000).
 
 ## Debug logging
 
-The server logs the **raw OCR text** to the console for each upload:
-
-```
-[OCR DEBUG] file=id.jpg chars=142 confidence=87.3
---- raw_text ---
-...
---- end ---
-```
+The server logs the **raw OCR text** to the console for each upload and logs `extraction_source` / `llm_fallback_attempted` for each field-extraction call.
 
 Restart `npm run dev` after proxy changes so `/documents/*` routes to port 8000.
 
-## Quick test
+## Verification
 
 ```bash
-python backend/scripts/test_ocr.py   # generates two synthetic ID images and compares outputs
+python backend/scripts/verify_extraction.py   # rotated, blurry, labeled, source audit
+python backend/scripts/test_ocr.py            # two synthetic images, compare outputs
 ```
 
 Swagger: http://localhost:8000/docs

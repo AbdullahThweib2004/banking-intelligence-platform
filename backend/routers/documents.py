@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from services.auth import require_account_opening_role
-from services.field_parser import parse_id_fields
+from services.field_extraction import extract_all_fields
 from services.ocr import run_ocr
 from services.store import create_document, get_document
 
@@ -56,12 +56,12 @@ async def extract_id(
             detail="Could not read the ID clearly. Please upload a clearer photo.",
         ) from exc
 
-    # Temporary debug — visible in the API server console.
     logger.info(
-        "[extract-id] document pending | file=%s | ocr_confidence=%.1f | raw_text=%r",
+        "[extract-id] document pending | file=%s | ocr_confidence=%.1f | raw_text (%d chars):\n%s",
         filename,
         ocr.ocr_confidence,
-        ocr.raw_text[:500] + ("..." if len(ocr.raw_text) > 500 else ""),
+        len(ocr.raw_text),
+        ocr.raw_text,
     )
 
     doc = create_document(
@@ -98,20 +98,29 @@ async def extract_fields(
         )
 
     logger.info(
-        "[extract-fields] document_id=%s | parsing raw_text=%r",
+        "[extract-fields] document_id=%s | full raw_text (%d chars):\n%s",
         document_id,
-        doc.raw_text[:500] + ("..." if len(doc.raw_text) > 500 else ""),
+        len(doc.raw_text),
+        doc.raw_text,
     )
 
-    parsed = parse_id_fields(doc.raw_text, ocr_confidence=doc.ocr_confidence)
+    outcome = extract_all_fields(doc.raw_text, ocr_confidence=doc.ocr_confidence)
+    parsed = outcome.fields
 
     logger.info(
-        "[extract-fields] document_id=%s | first=%s last=%s id=%s confidence=%.1f",
+        "[extract-fields] document_id=%s | first=%s last=%s dob=%s father=%s mother=%s id=%s "
+        "source=%s confidence=%.1f llm_attempted=%s warnings=%s",
         document_id,
         parsed.first_name,
         parsed.last_name,
+        parsed.date_of_birth,
+        parsed.father_name,
+        parsed.mother_name,
         parsed.id_number,
+        parsed.extraction_source,
         parsed.confidence,
+        outcome.llm_fallback_attempted,
+        outcome.warnings,
     )
 
     return {
@@ -123,6 +132,9 @@ async def extract_fields(
         "mother_name": parsed.mother_name,
         "id_number": parsed.id_number,
         "confidence": parsed.confidence,
+        "extraction_source": parsed.extraction_source,
+        "llm_fallback_attempted": outcome.llm_fallback_attempted,
+        "extraction_warnings": outcome.warnings,
         "language": doc.language,
         "raw_text": doc.raw_text,
     }

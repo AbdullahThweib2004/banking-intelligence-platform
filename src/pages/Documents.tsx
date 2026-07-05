@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { extractId, extractFields, openNewAccount } from '@/lib/accountApi';
@@ -233,6 +234,7 @@ export const Documents: React.FC = () => {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [autoFilledFields, setAutoFilledFields] = useState<string[]>([]);
   const [extractionConfidence, setExtractionConfidence] = useState(0);
+  const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
   const [accountSubmitted, setAccountSubmitted] = useState(false);
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
@@ -256,6 +258,7 @@ export const Documents: React.FC = () => {
     setExtractError(null);
     setAutoFilledFields([]);
     setExtractionConfidence(0);
+    setExtractionWarnings([]);
     setAccountSubmitted(false);
     setReferenceId('');
     setDocumentId('');
@@ -353,11 +356,16 @@ export const Documents: React.FC = () => {
           ? Math.round(rawConfidence <= 1 ? rawConfidence * 100 : rawConfidence)
           : 0;
       setExtractionConfidence(confidence);
+      setExtractionWarnings(
+        Array.isArray(data.extraction_warnings)
+          ? data.extraction_warnings.filter((w): w is string => typeof w === 'string' && w.trim() !== '')
+          : []
+      );
 
       await writeAccountAudit(
         'account_opening_extract',
         document_id,
-        `Extracted ${filledFields.length} fields (confidence ${confidence}%)`
+        `Extracted ${filledFields.length} fields (confidence ${confidence}%, source ${data.extraction_source ?? 'unknown'})`
       );
 
       setAccountStep(2);
@@ -496,8 +504,16 @@ export const Documents: React.FC = () => {
     { label: language === 'ar' ? 'اسم العائلة' : 'Last Name', value: accountForm.lastName },
     { label: language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth', value: accountForm.dateOfBirth },
     { label: language === 'ar' ? 'رقم الهوية' : 'ID Number', value: accountForm.idNumber },
-    { label: language === 'ar' ? 'اسم الأب' : "Father's Name", value: accountForm.fatherName },
-    { label: language === 'ar' ? 'اسم الأم' : "Mother's Name", value: accountForm.motherName },
+    {
+      label: language === 'ar' ? 'اسم الأب (اختياري)' : "Father's Name (optional)",
+      value: accountForm.fatherName,
+      optional: true,
+    },
+    {
+      label: language === 'ar' ? 'اسم الأم (اختياري)' : "Mother's Name (optional)",
+      value: accountForm.motherName,
+      optional: true,
+    },
   ];
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -812,6 +828,27 @@ export const Documents: React.FC = () => {
               {/* Step 2: Review Data */}
               {accountStep === 2 && (
                 <div className="space-y-4">
+                  {extractionWarnings.length > 0 && (
+                    <Alert variant="destructive" className="border-warning/50 bg-warning/10 text-foreground">
+                      <AlertTriangle className="h-4 w-4 text-warning" />
+                      <AlertTitle>
+                        {language === 'ar'
+                          ? 'تعذّر استكمال بعض الحقول تلقائيًا'
+                          : 'Some fields could not be auto-recovered'}
+                      </AlertTitle>
+                      <AlertDescription className="space-y-1">
+                        {extractionWarnings.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
+                        <p className="text-muted-foreground">
+                          {language === 'ar'
+                            ? 'يرجى مراجعة الحقول أدناه وإدخال أي قيم ناقصة يدويًا.'
+                            : 'Please review the fields below and enter any missing values manually.'}
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   {extractionConfidence > 0 && (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
                       <span className="text-sm text-muted-foreground">
@@ -903,6 +940,9 @@ export const Documents: React.FC = () => {
                       <div className="flex items-center justify-between gap-2 min-h-[24px]">
                         <Label htmlFor="rev-father-name">
                           {language === 'ar' ? 'اسم الأب' : "Father's Name"}
+                          <span className="text-muted-foreground font-normal">
+                            {language === 'ar' ? ' (اختياري)' : ' (optional)'}
+                          </span>
                         </Label>
                         {autoFilledBadge('fatherName')}
                       </div>
@@ -918,6 +958,9 @@ export const Documents: React.FC = () => {
                       <div className="flex items-center justify-between gap-2 min-h-[24px]">
                         <Label htmlFor="rev-mother-name">
                           {language === 'ar' ? 'اسم الأم' : "Mother's Name"}
+                          <span className="text-muted-foreground font-normal">
+                            {language === 'ar' ? ' (اختياري)' : ' (optional)'}
+                          </span>
                         </Label>
                         {autoFilledBadge('motherName')}
                       </div>
@@ -968,7 +1011,12 @@ export const Documents: React.FC = () => {
                         >
                           <span className="text-sm text-muted-foreground">{row.label}</span>
                           <span className="text-sm font-medium text-foreground text-end break-all">
-                            {row.value || '—'}
+                            {row.value ||
+                              ('optional' in row && row.optional
+                                ? language === 'ar'
+                                  ? 'غير متوفر'
+                                  : 'Not on ID'
+                                : '—')}
                           </span>
                         </div>
                       ))}

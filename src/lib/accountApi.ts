@@ -94,6 +94,9 @@ export interface ExtractedFields {
 export interface ExtractFieldsResponse extends ExtractedFields {
   /** Some backends nest the values under `fields`. */
   fields?: ExtractedFields;
+  extraction_source?: 'regex' | 'regex+llm' | 'llm';
+  llm_fallback_attempted?: boolean;
+  extraction_warnings?: string[];
 }
 
 /** Step 2 — run field extraction for a previously uploaded document. */
