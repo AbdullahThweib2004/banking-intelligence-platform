@@ -3,36 +3,26 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
+const API_TARGET = "http://127.0.0.1:8000";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
-    // Proxy only account-opening API calls — NOT the SPA route GET /documents.
+    strictPort: true,
+    // Proxy ONLY backend API paths — never the SPA route GET /documents.
     proxy: {
       "/documents/extract-id": {
-        target: "http://127.0.0.1:8000",
+        target: API_TARGET,
         changeOrigin: true,
       },
-      "/documents": {
-        target: "http://127.0.0.1:8000",
+      "^/documents/[^/]+/extract-fields$": {
+        target: API_TARGET,
         changeOrigin: true,
-        bypass(req) {
-          const url = req.url ?? "";
-          // Browser navigation to the Documents page — serve the React app.
-          if (url === "/documents" || url.startsWith("/documents?")) {
-            return url;
-          }
-          // POST /documents/{id}/extract-fields — proxy to FastAPI.
-          if (/^\/documents\/[^/]+\/extract-fields/.test(url)) {
-            return null;
-          }
-          // Any other /documents/* path is frontend — do not proxy.
-          return url;
-        },
       },
       "/accounts/open-new": {
-        target: "http://127.0.0.1:8000",
+        target: API_TARGET,
         changeOrigin: true,
       },
     },
