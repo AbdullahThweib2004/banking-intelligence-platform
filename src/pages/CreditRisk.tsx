@@ -660,7 +660,8 @@ export const CreditRisk: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+          <LoanRiskInfoPopover language={language} />
           <Dialog
             open={isNewAssessmentOpen}
             onOpenChange={(open) => {
@@ -905,7 +906,6 @@ export const CreditRisk: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
-          <LoanRiskInfoPopover language={language} />
           </div>
 
           <Dialog

@@ -66,12 +66,17 @@ export const LoanRiskInfoPopover: React.FC<LoanRiskInfoPopoverProps> = ({ langua
           variant="outline"
           size="icon"
           className={cn(
-            'h-10 w-10 shrink-0 rounded-md border-border/80 text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/5',
+            'relative h-11 w-11 shrink-0 rounded-full',
+            'border-2 border-[hsl(217,91%,55%)] bg-[hsl(217,91%,48%)] text-white',
+            'shadow-md shadow-[hsl(217,91%,48%)]/40',
+            'ring-4 ring-[hsl(217,91%,55%)]/25',
+            'hover:bg-[hsl(217,91%,42%)] hover:border-[hsl(217,91%,48%)] hover:scale-105 hover:shadow-lg hover:shadow-[hsl(217,91%,48%)]/50',
+            'focus-visible:ring-[hsl(217,91%,55%)]/50 transition-all duration-200',
             className
           )}
           aria-label={isAr ? 'شرح طريقة حساب المخاطر' : 'Explain risk calculation method'}
         >
-          <Info className="h-4 w-4" aria-hidden />
+          <Info className="h-5 w-5 stroke-[2.5]" aria-hidden />
         </Button>
       </PopoverTrigger>
       <PopoverContent
