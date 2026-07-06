@@ -32,23 +32,51 @@ function authHeaders(authz: AccountAuthz): Record<string, string> {
   return headers;
 }
 
+const API_UNAVAILABLE_MSG =
+  'The OCR API server is not running. In a second terminal, run: npm run dev:api';
+
+function parseErrorMessage(data: unknown, status: number): string {
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+  const detail = record?.detail ?? record?.message ?? record?.error;
+  if (detail != null) {
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) =>
+          typeof item === 'object' && item && 'msg' in item
+            ? String((item as { msg: unknown }).msg)
+            : String(item)
+        )
+        .join('; ');
+    }
+    return String(detail);
+  }
+  if (status === 403) {
+    return 'You are not authorized to perform account opening.';
+  }
+  if (status >= 500 || status === 502 || status === 503 || status === 504) {
+    return API_UNAVAILABLE_MSG;
+  }
+  return `Request failed (${status})`;
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, init);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, init);
+  } catch {
+    throw new Error(API_UNAVAILABLE_MSG);
+  }
 
   let data: unknown = null;
   try {
     data = await res.json();
   } catch {
-    // Non-JSON response (e.g. an HTML error page) — leave data as null.
+    // Non-JSON response (e.g. Vite proxy error when API is down).
   }
 
   if (!res.ok) {
-    const record = (data && typeof data === 'object' ? (data as Record<string, unknown>) : null);
-    const message =
-      (record && (record.message ?? record.error)) != null
-        ? String(record.message ?? record.error)
-        : `Request failed (${res.status})`;
-    throw new Error(message);
+    throw new Error(parseErrorMessage(data, res.status));
   }
 
   return data as T;
@@ -188,7 +216,10 @@ export async function fetchDocumentPdf(documentId: string, authz: AccountAuthz):
       if (data.detail != null) message = String(data.detail);
       else if (data.message != null) message = String(data.message);
     } catch {
-      // Non-JSON error body.
+      if (res.status >= 500) {
+        message =
+          'The OCR API server is not running. In a second terminal, run: npm run dev:api';
+      }
     }
     throw new Error(message);
   }
