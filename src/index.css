@@ -239,4 +239,10 @@
       box-shadow: 0 0 20px 10px hsl(327 76% 41% / 0);
     }
   }
+
+  /* Onboarding tour — keep highlighted element above the overlay */
+  .onboarding-spotlight-target {
+    position: relative;
+    z-index: 9999 !important;
+  }
 }

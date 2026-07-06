@@ -59,12 +59,14 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
+import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { useAuth } from '@/contexts/AuthContext';
 import { canOpenAccount } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import {
   deleteDocumentRecord,
   resolveDocumentForView,
+  downloadDocumentFile,
   insertDocument,
   uploadDocumentToStorage,
   confidenceToPercent,
@@ -191,6 +193,7 @@ export const Documents: React.FC = () => {
   };
   const [activeTab, setActiveTab] = useState('all');
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
   const [docToDelete, setDocToDelete] = useState<DocumentRecord | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
@@ -658,6 +661,38 @@ export const Documents: React.FC = () => {
     }
   };
 
+  const handleDownloadDocument = async (doc: DocumentRecord) => {
+    if (!doc.file_path?.trim()) {
+      toast.error(
+        language === 'ar'
+          ? 'لا يوجد ملف مرفق لهذا المستند'
+          : 'No file is attached to this document'
+      );
+      return;
+    }
+
+    setDownloadingDocId(doc.id);
+    try {
+      const target = await resolveDocumentForView(doc, (documentId) =>
+        fetchDocumentPdf(documentId, authz)
+      );
+      await downloadDocumentFile(doc, target);
+      toast.success(
+        language === 'ar' ? 'تم بدء تنزيل المستند' : 'Download started'
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر تنزيل المستند'
+            : 'Could not download the document'
+      );
+    } finally {
+      setDownloadingDocId(null);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!docToDelete || deletingDocId) return;
 
@@ -714,6 +749,7 @@ export const Documents: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PageOnboardingTour tourId="documents" />
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div>
@@ -737,6 +773,7 @@ export const Documents: React.FC = () => {
             return (
               <Card
                 key={task.id}
+                data-tour-target={task.id === 'open-account' ? 'open-new-account' : undefined}
                 onClick={handleClick}
                 role={task.available ? 'button' : undefined}
                 tabIndex={task.available ? 0 : undefined}
@@ -1539,8 +1576,18 @@ export const Documents: React.FC = () => {
                                 <Eye className="h-4 w-4" />
                               )}
                             </Button>
-                            <Button variant="ghost" size="icon" disabled title="Download">
-                              <Download className="h-4 w-4" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title={language === 'ar' ? 'تنزيل' : 'Download'}
+                              disabled={downloadingDocId === doc.id}
+                              onClick={() => handleDownloadDocument(doc)}
+                            >
+                              {downloadingDocId === doc.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
                             </Button>
                             <Button
                               variant="ghost"

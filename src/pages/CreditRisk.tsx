@@ -5,6 +5,7 @@ import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import { useCreditRiskStats } from '@/hooks/useStats';
 import { StatValue } from '@/components/StatValue';
+import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -642,6 +643,7 @@ export const CreditRisk: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PageOnboardingTour tourId="credit-risk" />
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -663,7 +665,7 @@ export const CreditRisk: React.FC = () => {
             }}
           >
             <DialogTrigger asChild>
-              <Button className="gradient-bg gap-2">
+              <Button className="gradient-bg gap-2" data-tour-target="new-assessment">
                 <Plus className="h-4 w-4" />
                 {t('credit.newAssessment')}
               </Button>
@@ -908,7 +910,7 @@ export const CreditRisk: React.FC = () => {
             }}
           >
             <DialogTrigger asChild>
-              <Button variant="outline" className="gap-2">
+              <Button variant="outline" className="gap-2" data-tour-target="objection-modification">
                 <Pencil className="h-4 w-4" />
                 {language === 'ar' ? 'اعتراض / تعديل' : 'Objection / Modification'}
               </Button>
@@ -1095,7 +1097,7 @@ export const CreditRisk: React.FC = () => {
         </div>
 
         {/* Applications Table */}
-        <Card>
+        <Card data-tour-target="assessment-table">
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>

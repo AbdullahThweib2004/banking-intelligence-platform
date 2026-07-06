@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { Link } from 'react-router-dom';
 import { useDashboardStats } from '@/hooks/useStats';
 import { StatValue } from '@/components/StatValue';
+import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 
 interface StatCardProps {
   title: string;
@@ -144,6 +145,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PageOnboardingTour tourId="dashboard" />
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div>

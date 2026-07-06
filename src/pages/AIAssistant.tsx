@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useAIChat } from '@/contexts/AIChatContext';
 import { SuggestedQuestions } from '@/components/SuggestedQuestions';
+import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 
 const isArabicText = (text: string) => /[\u0600-\u06FF]/.test(text);
 
@@ -177,6 +178,7 @@ export const AIAssistant: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PageOnboardingTour tourId="ai-assistant" />
       <div className="h-[calc(100vh-12rem)] flex flex-col animate-fade-in">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -273,7 +275,7 @@ export const AIAssistant: React.FC = () => {
           </Card>
 
           {/* Main chat */}
-          <Card className="flex-1 flex flex-col min-h-0">
+          <Card className="flex-1 flex flex-col min-h-0" data-tour-target="ai-chat">
             <CardContent className="flex-1 flex flex-col p-0 min-h-0">
               <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
                 {conversationLoading ? (

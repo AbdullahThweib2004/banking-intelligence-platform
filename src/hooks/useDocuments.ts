@@ -272,6 +272,40 @@ export async function resolveDocumentForView(
   return { url: signedUrl, source: 'url' };
 }
 
+/** Trigger a browser download for a resolved document target. */
+export async function downloadDocumentFile(
+  doc: DocumentRecord,
+  target: DocumentViewTarget
+): Promise<void> {
+  const filename = doc.name?.trim() || 'document';
+
+  const saveBlob = (blob: Blob) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.rel = 'noopener';
+    anchor.click();
+    URL.revokeObjectURL(blobUrl);
+  };
+
+  if (target.source === 'blob') {
+    const anchor = document.createElement('a');
+    anchor.href = target.url;
+    anchor.download = filename;
+    anchor.rel = 'noopener';
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(target.url), 1000);
+    return;
+  }
+
+  const res = await fetch(target.url);
+  if (!res.ok) {
+    throw new Error('Could not download the file.');
+  }
+  saveBlob(await res.blob());
+}
+
 export async function deleteDocumentRecord(record: DocumentRecord): Promise<void> {
   const { data, error } = await supabase
     .from('documents')
