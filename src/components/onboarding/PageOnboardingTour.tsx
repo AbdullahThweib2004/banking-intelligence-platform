@@ -1,6 +1,6 @@
 import React from 'react';
 import { ONBOARDING_TOURS } from '@/config/onboardingTours';
-import type { OnboardingTourId } from '@/lib/onboardingStorage';
+import type { OnboardingTourId } from '@/lib/onboardingSession';
 import { OnboardingTour } from './OnboardingTour';
 
 interface PageOnboardingTourProps {

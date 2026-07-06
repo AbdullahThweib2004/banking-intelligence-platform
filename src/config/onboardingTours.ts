@@ -1,4 +1,4 @@
-import type { OnboardingTourId } from '@/lib/onboardingStorage';
+import type { OnboardingTourId } from '@/lib/onboardingSession';
 
 export interface OnboardingStep {
   target: string;

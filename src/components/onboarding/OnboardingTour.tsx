@@ -4,10 +4,11 @@ import { Bot, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
-  isOnboardingComplete,
-  markOnboardingComplete,
+  hasAutoShownTour,
+  markAutoShownTour,
+  subscribeManualTourStart,
   type OnboardingTourId,
-} from '@/lib/onboardingStorage';
+} from '@/lib/onboardingSession';
 import type { OnboardingStep, OnboardingWelcome } from '@/config/onboardingTours';
 
 const PADDING = 12;
@@ -107,33 +108,48 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
   const tooltipRef = useRef<HTMLDivElement>(null);
   const highlightedElRef = useRef<HTMLElement | null>(null);
 
+  const beginTour = useCallback(() => {
+    if (welcome) {
+      setShowWelcome(true);
+      setActive(true);
+    } else if (steps.length > 0) {
+      setShowWelcome(false);
+      setActive(true);
+      setStepIndex(0);
+    } else {
+      setActive(false);
+      setShowWelcome(false);
+    }
+  }, [welcome, steps.length]);
+
   const finish = useCallback(() => {
     if (highlightedElRef.current) {
       highlightedElRef.current.classList.remove('onboarding-spotlight-target');
       highlightedElRef.current = null;
     }
-    markOnboardingComplete(tourId);
     setActive(false);
     setShowWelcome(false);
     setSpotlight(null);
     setTooltipPos(null);
-  }, [tourId]);
+  }, []);
 
+  // Auto-start once per page per app session (in-memory only; resets on refresh).
   useEffect(() => {
-    if (isOnboardingComplete(tourId)) return;
+    if (hasAutoShownTour(tourId)) return;
+
+    markAutoShownTour(tourId);
+
     const timer = window.setTimeout(() => {
-      if (welcome) {
-        setShowWelcome(true);
-        setActive(true);
-      } else if (steps.length > 0) {
-        setActive(true);
-        setStepIndex(0);
-      } else {
-        finish();
-      }
+      beginTour();
     }, 400);
+
     return () => window.clearTimeout(timer);
-  }, [tourId, welcome, steps.length, finish]);
+  }, [tourId, beginTour]);
+
+  // Manual restart (e.g. Help / "Start tour again") bypasses the auto-show flag.
+  useEffect(() => {
+    return subscribeManualTourStart(tourId, beginTour);
+  }, [tourId, beginTour]);
 
   const updateLayout = useCallback(() => {
     if (showWelcome || !active || steps.length === 0) return;
@@ -199,6 +215,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
       finish();
       return;
     }
+    setActive(true);
     setStepIndex(0);
   };
 
