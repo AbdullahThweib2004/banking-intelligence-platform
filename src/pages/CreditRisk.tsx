@@ -47,7 +47,6 @@ import {
   Plus,
   Search,
   Eye,
-  Info,
   Pencil,
   Loader2,
 } from 'lucide-react';
@@ -1223,9 +1222,6 @@ export const CreditRisk: React.FC = () => {
                             </Button>
                           </>
                         )}
-                        <Button variant="ghost" size="icon">
-                          <Info className="h-4 w-4" />
-                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
