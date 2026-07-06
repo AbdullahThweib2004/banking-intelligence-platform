@@ -8,10 +8,6 @@
  *   3. strictly parsing/validating the AI JSON response,
  *   4. producing the persistence snapshot (DB columns),
  *   5. optionally falling back to the legacy math engine behind a flag.
- *
- * Modules are intentionally separate: data retrieval lives in the page,
- * AI request building + parsing live here, persistence shape is returned here,
- * and UI rendering reuses SavedRiskExplanationView.
  */
 
 import { supabase } from '@/integrations/supabase/client';
@@ -66,13 +62,23 @@ export interface AiCreditResult {
 export interface AssessmentOutcome {
   snapshot: SavedRiskExplanation;
   source: 'ai' | 'algorithm';
+  /** Set when source === 'algorithm' — why AI was not used. */
+  fallbackReason?: string;
+  debug?: AssessmentDebugInfo;
+}
+
+export interface AssessmentDebugInfo {
+  ai_attempted: boolean;
+  ai_configured: boolean | null;
+  ai_error_message?: string;
+  fallback_reason?: string;
+  result_source: 'ai' | 'algorithm';
 }
 
 const EDGE_FUNCTION = 'credit-assessment';
 
-/** Feature flag: allow falling back to the legacy math engine. Always on in local dev. */
+/** Controlled by VITE_CREDIT_AI_FALLBACK (default: enabled). Set to "false" to surface AI errors. */
 function fallbackEnabled(): boolean {
-  if (import.meta.env.DEV) return true;
   return import.meta.env.VITE_CREDIT_AI_FALLBACK !== 'false';
 }
 
@@ -85,12 +91,22 @@ function formatAssessmentError(err: unknown): string {
     /* not JSON */
   }
   if (/402|credits|max_tokens/i.test(raw)) {
-    return 'OpenRouter credit limit reached. Add credits at openrouter.ai or enable the local fallback engine.';
+    return (
+      'OpenRouter credit limit reached (HTTP 402). Add credits at openrouter.ai, ' +
+      'lower CREDIT_MAX_TOKENS on the edge function, or temporarily set VITE_CREDIT_AI_FALLBACK=true.'
+    );
   }
   if (/OPENROUTER_API_KEY/i.test(raw)) {
     return 'OPENROUTER_API_KEY is not configured on Supabase. Run: supabase secrets set OPENROUTER_API_KEY=...';
   }
+  if (/truncated|finish_reason/i.test(raw)) {
+    return 'AI response was truncated. Redeploy credit-assessment with a higher CREDIT_MAX_TOKENS or slimmer prompt.';
+  }
   return raw || 'AI assessment failed';
+}
+
+function classifyAiError(err: unknown): string {
+  return formatAssessmentError(err);
 }
 
 /** Build the structured financial payload from raw form input. */
@@ -188,8 +204,6 @@ export function parseAiCreditResult(
     throw new Error('AI response missing top factors');
   }
 
-  // Prefer our deterministic derived features for storage/rendering
-  // consistency; the AI echoes them but we trust the engineered payload.
   const derived_features = fallbackDerived;
 
   return {
@@ -223,21 +237,52 @@ export function serializeAiAssessment(result: AiCreditResult): SavedRiskExplanat
   };
 }
 
+async function extractFunctionError(error: {
+  message: string;
+  context?: Response;
+}): Promise<string> {
+  let detail = error.message;
+  try {
+    const ctx = error.context;
+    if (ctx && typeof ctx.text === 'function') {
+      const text = await ctx.text();
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          detail = parsed.error ?? text;
+        } catch {
+          detail = text;
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return detail;
+}
+
 /**
  * Run the AI credit assessment. Returns the persistence-ready snapshot and
  * which engine produced it. On AI failure, falls back to the legacy math
- * engine only if the feature flag allows it; otherwise rethrows.
+ * engine only if VITE_CREDIT_AI_FALLBACK is not "false"; otherwise rethrows.
  */
 export async function assessCreditRisk(
   input: CreditScoreInput
 ): Promise<AssessmentOutcome> {
   const derived = buildDerivedFeatures(input);
   const payload = buildAssessmentPayload(input, derived);
+  const canFallback = fallbackEnabled();
 
-  console.info('[ai-credit] invoking edge function', EDGE_FUNCTION, {
-    inputKeys: Object.keys(payload.input),
-    derivedKeys: Object.keys(payload.derived),
-    fallbackEnabled: fallbackEnabled(),
+  const debugBase: AssessmentDebugInfo = {
+    ai_attempted: true,
+    ai_configured: null,
+    result_source: 'ai',
+  };
+
+  console.info('[ai-credit] starting assessment', {
+    edgeFunction: EDGE_FUNCTION,
+    fallbackEnabled: canFallback,
+    envFallbackFlag: import.meta.env.VITE_CREDIT_AI_FALLBACK ?? '(unset)',
   });
 
   try {
@@ -246,45 +291,70 @@ export async function assessCreditRisk(
     });
 
     if (error) {
-      // Supabase wraps non-2xx responses; surface the function's JSON error body.
-      let detail = error.message;
-      try {
-        const ctx = (error as { context?: Response }).context;
-        if (ctx && typeof ctx.text === 'function') {
-          const text = await ctx.text();
-          if (text) detail = text;
-        }
-      } catch {
-        /* ignore */
-      }
-      console.error('[ai-credit] edge function returned an error:', detail);
+      const detail = await extractFunctionError(
+        error as { message: string; context?: Response }
+      );
+      debugBase.ai_error_message = detail;
+      console.error('[ai-credit] edge function error:', detail);
       throw new Error(detail);
     }
     if (data?.error) {
-      console.error('[ai-credit] edge function error payload:', data.error);
-      throw new Error(String(data.error));
+      const detail = String(data.error);
+      debugBase.ai_error_message = detail;
+      console.error('[ai-credit] edge function error payload:', detail);
+      throw new Error(detail);
     }
 
-    console.info('[ai-credit] raw edge result:', data?.result);
+    console.info('[ai-credit] raw edge result keys:', data?.result ? Object.keys(data.result) : null);
     const result = parseAiCreditResult(data?.result, derived);
-    console.info('[ai-credit] parsed assessment result:', {
+
+    const debug: AssessmentDebugInfo = {
+      ...debugBase,
+      ai_configured: true,
+      result_source: 'ai',
+    };
+    console.info('[ai-credit] AI assessment succeeded', {
       score: result.score,
       category: result.category,
       confidence: result.confidence,
       recommended_action: result.recommended_action,
       result_source: result.result_source,
       factors: result.top_factors.length,
+      debug,
     });
-    return { snapshot: serializeAiAssessment(result), source: 'ai' };
-  } catch (err) {
-    console.error('[ai-credit] AI assessment failed:', err);
 
-    if (!fallbackEnabled()) {
-      throw new Error(formatAssessmentError(err));
+    return { snapshot: serializeAiAssessment(result), source: 'ai', debug };
+  } catch (err) {
+    const aiErrorMessage = classifyAiError(err);
+    debugBase.ai_error_message = aiErrorMessage;
+    debugBase.result_source = 'algorithm';
+
+    console.error('[ai-credit] AI assessment failed', {
+      ai_attempted: true,
+      ai_error_message: aiErrorMessage,
+      fallbackEnabled: canFallback,
+    });
+
+    if (!canFallback) {
+      throw new Error(aiErrorMessage);
     }
 
-    console.warn('[ai-credit] falling back to legacy math engine');
+    const fallbackReason = aiErrorMessage;
+    console.warn('[ai-credit] falling back to legacy math engine', {
+      fallback_reason: fallbackReason,
+      result_source: 'algorithm',
+    });
+
     const mathResult = computeCreditScore(input);
-    return { snapshot: serializeRiskExplanation(mathResult), source: 'algorithm' };
+    return {
+      snapshot: serializeRiskExplanation(mathResult),
+      source: 'algorithm',
+      fallbackReason,
+      debug: {
+        ...debugBase,
+        fallback_reason: fallbackReason,
+        result_source: 'algorithm',
+      },
+    };
   }
 }

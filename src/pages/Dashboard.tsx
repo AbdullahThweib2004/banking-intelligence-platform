@@ -21,7 +21,9 @@ import {
 import { cn } from '@/lib/utils';
 import { Link } from 'react-router-dom';
 import { useDashboardStats } from '@/hooks/useStats';
+import { useRecentActivity, type RecentActivityItem } from '@/hooks/useRecentActivity';
 import { StatValue } from '@/components/StatValue';
+import { Skeleton } from '@/components/ui/skeleton';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 
 interface StatCardProps {
@@ -71,51 +73,7 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon: Icon, d
   );
 };
 
-interface ActivityItem {
-  id: string;
-  type: 'credit' | 'document' | 'approval' | 'user';
-  title: string;
-  description: string;
-  time: string;
-  status: 'pending' | 'completed' | 'warning';
-}
-
-const recentActivities: ActivityItem[] = [
-  {
-    id: '1',
-    type: 'credit',
-    title: 'Credit Assessment Completed',
-    description: 'Application #12345 - Risk Score: 42 (Low)',
-    time: '5 min ago',
-    status: 'completed',
-  },
-  {
-    id: '2',
-    type: 'approval',
-    title: 'Approval Pending',
-    description: 'Loan application requires manager review',
-    time: '15 min ago',
-    status: 'pending',
-  },
-  {
-    id: '3',
-    type: 'document',
-    title: 'Document Processed',
-    description: '3 documents extracted successfully',
-    time: '1 hour ago',
-    status: 'completed',
-  },
-  {
-    id: '4',
-    type: 'credit',
-    title: 'High Risk Alert',
-    description: 'Application #12348 flagged for review',
-    time: '2 hours ago',
-    status: 'warning',
-  },
-];
-
-const getActivityIcon = (type: ActivityItem['type']) => {
+const getActivityIcon = (type: RecentActivityItem['type']) => {
   switch (type) {
     case 'credit': return TrendingUp;
     case 'document': return FileText;
@@ -125,7 +83,7 @@ const getActivityIcon = (type: ActivityItem['type']) => {
   }
 };
 
-const getStatusBadge = (status: ActivityItem['status'], language: string) => {
+const getStatusBadge = (status: RecentActivityItem['status'], language: string) => {
   switch (status) {
     case 'completed':
       return <Badge className="bg-success/10 text-success border-success/20">{language === 'ar' ? 'مكتمل' : 'Completed'}</Badge>;
@@ -142,6 +100,11 @@ export const Dashboard: React.FC = () => {
   const { t, language } = useLanguage();
   const { canAccess } = useAuth();
   const { stats, loading, error } = useDashboardStats();
+  const {
+    activities: recentActivities,
+    loading: activityLoading,
+    error: activityError,
+  } = useRecentActivity(language);
 
   return (
     <DashboardLayout>
@@ -250,37 +213,69 @@ export const Dashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentActivities.map((activity) => {
-                  const Icon = getActivityIcon(activity.type);
-                  return (
-                    <div
-                      key={activity.id}
-                      className="flex items-start gap-4 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                    >
-                      <div className={cn(
-                        "p-2 rounded-lg",
-                        activity.status === 'completed' && "bg-success/10",
-                        activity.status === 'pending' && "bg-warning/10",
-                        activity.status === 'warning' && "bg-destructive/10"
-                      )}>
-                        <Icon className={cn(
-                          "h-4 w-4",
-                          activity.status === 'completed' && "text-success",
-                          activity.status === 'pending' && "text-warning",
-                          activity.status === 'warning' && "text-destructive"
-                        )} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-medium text-foreground truncate">{activity.title}</p>
-                          {getStatusBadge(activity.status, language)}
-                        </div>
-                        <p className="text-sm text-muted-foreground truncate">{activity.description}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
+                {activityLoading &&
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-start gap-4 p-3 rounded-lg bg-muted/50">
+                      <Skeleton className="h-8 w-8 rounded-lg shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-3/5" />
+                        <Skeleton className="h-3 w-4/5" />
+                        <Skeleton className="h-3 w-1/4" />
                       </div>
                     </div>
-                  );
-                })}
+                  ))}
+
+                {!activityLoading && activityError && (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    {language === 'ar'
+                      ? 'تعذر تحميل النشاط الأخير'
+                      : 'Could not load recent activity'}
+                  </p>
+                )}
+
+                {!activityLoading && !activityError && recentActivities.length === 0 && (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    {language === 'ar' ? 'لا يوجد نشاط حديث' : 'No recent activity yet'}
+                  </p>
+                )}
+
+                {!activityLoading &&
+                  !activityError &&
+                  recentActivities.map((activity) => {
+                    const Icon = getActivityIcon(activity.type);
+                    return (
+                      <div
+                        key={activity.id}
+                        className="flex items-start gap-4 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                      >
+                        <div
+                          className={cn(
+                            'p-2 rounded-lg',
+                            activity.status === 'completed' && 'bg-success/10',
+                            activity.status === 'pending' && 'bg-warning/10',
+                            activity.status === 'warning' && 'bg-destructive/10'
+                          )}
+                        >
+                          <Icon
+                            className={cn(
+                              'h-4 w-4',
+                              activity.status === 'completed' && 'text-success',
+                              activity.status === 'pending' && 'text-warning',
+                              activity.status === 'warning' && 'text-destructive'
+                            )}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium text-foreground truncate">{activity.title}</p>
+                            {getStatusBadge(activity.status, language)}
+                          </div>
+                          <p className="text-sm text-muted-foreground truncate">{activity.description}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </CardContent>
           </Card>

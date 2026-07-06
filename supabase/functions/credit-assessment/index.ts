@@ -1,33 +1,19 @@
 // Supabase Edge Function: credit-assessment
 // ---------------------------------------------------------------------------
 // AI-powered credit risk assessment. The AI is the SOURCE OF TRUTH for the
-// score, category, recommended action and explanation. The client only builds
-// the structured financial payload (deterministic feature engineering) and
-// renders / persists what the AI returns.
-//
-// Request (POST JSON):
-//   {
-//     input: {
-//       monthly_income, monthly_expenses, existing_loans,
-//       requested_loan_amount, employment_type, loan_purpose
-//     },
-//     derived: { ...derived financial features... }
-//   }
-//
-// Response: { result: AiCreditResult } | { error: string }
-//
-// Deterministic: temperature 0, JSON-only response_format.
+// score, category, recommended action and explanation.
 //
 // Deploy:   supabase functions deploy credit-assessment
 // Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
 //           (optional) supabase secrets set CREDIT_MODEL=openai/gpt-4o-mini
+//           (optional) supabase secrets set CREDIT_MAX_TOKENS=400
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
-// Tight output cap: the JSON result is small. Keep low enough for OpenRouter
-// free-tier credit limits (402 when max_tokens exceeds affordable budget).
-const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "300");
+// Keep low enough for OpenRouter credit budgets (HTTP 402 when too high).
+// Slim JSON output (no derived_features echo) fits comfortably in ~400 tokens.
+const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "400");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,26 +29,30 @@ function json(status: number, body: unknown) {
   });
 }
 
+function maskSecret(value: string | undefined): string {
+  if (!value) return "(missing)";
+  if (value.length <= 8) return "***";
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}
+
 const SYSTEM_PROMPT = `You are a senior bank credit risk officer for a retail bank.
-You assess loan applications strictly from the structured financial fields provided.
-You must respond with ONLY a single valid JSON object and nothing else: no markdown,
-no code fences, no commentary before or after.
+Assess loan applications strictly from the structured financial fields provided.
+Respond with ONLY a single valid JSON object — no markdown, no code fences.
 
 Scoring rules:
-- "score" is an integer from 0 (lowest risk) to 100 (highest risk).
+- "score": integer 0 (lowest risk) to 100 (highest risk).
 - "category": "low" if score < 40, "medium" if 40-69, "high" if score >= 70.
 - Higher debt service ratio, higher loan-to-income ratio, negative disposable income,
-  and unstable employment increase risk. Strong income and positive disposable income
-  reduce risk.
-- "recommended_action": "approve" for low risk, "manual_review" for medium/borderline,
-  "reject" for high risk or negative disposable income.
-- "confidence" is a number between 0 and 1 reflecting certainty given the inputs.
-- "top_factors": 3 to 6 items, each { "label", "impact" (one of "high"|"medium"|"low"),
-  "direction" (one of "increases risk"|"decreases risk"), "value" (short string) }.
-- "summary": one or two professional sentences, no markdown.
-- Echo back the provided derived_features unchanged.
-- "result_source" must be the string "ai".
-- "assessed_at" must be the provided assessment timestamp.
+  and unstable employment increase risk.
+- "recommended_action": "approve" | "manual_review" | "reject".
+- "confidence": number 0-1.
+- "top_factors": exactly 3 items, each { "label", "impact" ("high"|"medium"|"low"),
+  "direction" ("increases risk"|"decreases risk"), "value" (short string) }.
+- "summary": one professional sentence, no markdown.
+- "result_source": "ai".
+- "assessed_at": use the provided assessment timestamp.
+
+Do NOT include derived_features in your response — the server adds them.
 
 Return JSON shaped exactly:
 {
@@ -71,7 +61,6 @@ Return JSON shaped exactly:
   "confidence": number,
   "summary": string,
   "top_factors": [ { "label": string, "impact": string, "direction": string, "value": string } ],
-  "derived_features": object,
   "recommended_action": "approve" | "manual_review" | "reject",
   "assessed_at": string,
   "result_source": "ai"
@@ -79,6 +68,12 @@ Return JSON shaped exactly:
 
 async function callModel(payload: unknown, assessedAt: string): Promise<string> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  const aiConfigured = Boolean(apiKey);
+  console.log("[credit-assessment] ai_configured:", aiConfigured, {
+    model: CREDIT_MODEL,
+    max_tokens: MAX_TOKENS,
+    api_key: maskSecret(apiKey),
+  });
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
 
   const userMessage = JSON.stringify({
@@ -88,11 +83,7 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
     application: payload,
   });
 
-  // NOTE: max_tokens MUST be set. Without it OpenRouter reserves the model's
-  // full output window (e.g. 16k) for cost estimation and rejects the request
-  // with HTTP 402 on low-credit accounts. The JSON result is small, so a tight
-  // cap is both cheaper and avoids the 402.
-  console.log("[credit-assessment] calling model:", CREDIT_MODEL);
+  console.log("[credit-assessment] ai_attempted: true — calling OpenRouter");
   const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -115,20 +106,26 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
     }),
   });
 
-  console.log("[credit-assessment] OpenRouter status:", res.status);
+  console.log("[credit-assessment] OpenRouter HTTP status:", res.status);
   if (!res.ok) {
     const detail = await res.text();
-    // detail is the provider error body (no secrets); safe to log.
     console.error("[credit-assessment] OpenRouter error body:", detail);
     throw new Error(`AI request failed (${res.status}): ${detail}`);
   }
 
   const data = await res.json();
   const content = data?.choices?.[0]?.message?.content;
+  const finishReason = data?.choices?.[0]?.finish_reason;
+  console.log("[credit-assessment] finish_reason:", finishReason);
   console.log(
     "[credit-assessment] raw AI content:",
     typeof content === "string" ? content.slice(0, 2000) : String(content),
   );
+  if (finishReason === "length") {
+    throw new Error(
+      `AI response truncated (max_tokens=${MAX_TOKENS}). Increase CREDIT_MAX_TOKENS or add OpenRouter credits.`,
+    );
+  }
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("AI returned an empty response");
   }
@@ -136,7 +133,6 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
 }
 
 function extractJson(text: string): unknown {
-  // Defensive: strip accidental code fences and locate the JSON object.
   const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
   try {
     return JSON.parse(cleaned);
@@ -180,16 +176,21 @@ Deno.serve(async (req) => {
       category: parsed?.category,
       recommended_action: parsed?.recommended_action,
       factors: Array.isArray(parsed?.top_factors) ? parsed.top_factors.length : 0,
+      result_source: "ai",
     });
 
-    // Force server-controlled fields regardless of model drift.
     parsed.result_source = "ai";
-    if (typeof parsed.assessed_at !== "string") {
-      parsed.assessed_at = assessedAt;
+    parsed.assessed_at =
+      typeof parsed.assessed_at === "string" ? parsed.assessed_at : assessedAt;
+    // Server-controlled: use deterministic derived features from the client payload.
+    if (derived && typeof derived === "object") {
+      parsed.derived_features = derived;
     }
 
     return json(200, { result: parsed });
   } catch (err) {
-    return json(500, { error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[credit-assessment] failed:", message);
+    return json(500, { error: message });
   }
 });

@@ -417,6 +417,7 @@ export const CreditRisk: React.FC = () => {
     // The AI service is the source of truth for the assessment result.
     let riskSnapshot: SavedRiskExplanation;
     let source: 'ai' | 'algorithm';
+    let fallbackReason: string | undefined;
     try {
       const outcome = await assessCreditRisk({
         monthlyIncome: income,
@@ -428,6 +429,11 @@ export const CreditRisk: React.FC = () => {
       });
       riskSnapshot = outcome.snapshot;
       source = outcome.source;
+      fallbackReason = outcome.fallbackReason;
+      console.info('[credit-risk] assessment outcome', outcome.debug ?? {
+        result_source: source,
+        fallback_reason: fallbackReason,
+      });
     } catch (err) {
       setAssessmentSubmitting(false);
       console.error('AI assessment failed:', err);
@@ -491,8 +497,8 @@ export const CreditRisk: React.FC = () => {
     const engineNote =
       source === 'algorithm'
         ? language === 'ar'
-          ? ' (نموذج احتياطي)'
-          : ' (fallback engine)'
+          ? ` (نموذج احتياطي${fallbackReason ? `: ${fallbackReason}` : ''})`
+          : ` (fallback engine${fallbackReason ? `: ${fallbackReason}` : ''})`
         : '';
     toast.success(
       language === 'ar'
