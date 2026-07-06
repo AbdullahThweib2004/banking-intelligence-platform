@@ -70,9 +70,27 @@ export interface AssessmentOutcome {
 
 const EDGE_FUNCTION = 'credit-assessment';
 
-/** Feature flag: allow falling back to the legacy math engine. Default: enabled. */
+/** Feature flag: allow falling back to the legacy math engine. Always on in local dev. */
 function fallbackEnabled(): boolean {
+  if (import.meta.env.DEV) return true;
   return import.meta.env.VITE_CREDIT_AI_FALLBACK !== 'false';
+}
+
+function formatAssessmentError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  try {
+    const parsed = JSON.parse(raw) as { error?: string };
+    if (parsed.error) return parsed.error;
+  } catch {
+    /* not JSON */
+  }
+  if (/402|credits|max_tokens/i.test(raw)) {
+    return 'OpenRouter credit limit reached. Add credits at openrouter.ai or enable the local fallback engine.';
+  }
+  if (/OPENROUTER_API_KEY/i.test(raw)) {
+    return 'OPENROUTER_API_KEY is not configured on Supabase. Run: supabase secrets set OPENROUTER_API_KEY=...';
+  }
+  return raw || 'AI assessment failed';
 }
 
 /** Build the structured financial payload from raw form input. */
@@ -262,7 +280,7 @@ export async function assessCreditRisk(
     console.error('[ai-credit] AI assessment failed:', err);
 
     if (!fallbackEnabled()) {
-      throw err instanceof Error ? err : new Error('AI assessment failed');
+      throw new Error(formatAssessmentError(err));
     }
 
     console.warn('[ai-credit] falling back to legacy math engine');

@@ -56,6 +56,7 @@ import { toast } from 'sonner';
 import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
+import { LoanRiskInfoPopover } from '@/components/LoanRiskInfoPopover';
 
 interface CreditApplication {
   id: string;
@@ -430,11 +431,13 @@ export const CreditRisk: React.FC = () => {
     } catch (err) {
       setAssessmentSubmitting(false);
       console.error('AI assessment failed:', err);
-      toast.error(
-        language === 'ar'
-          ? 'تعذّر إجراء تقييم المخاطر بالذكاء الاصطناعي. حاول مرة أخرى.'
-          : 'AI risk assessment failed. Please try again.'
-      );
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر إجراء تقييم المخاطر'
+            : 'Risk assessment failed';
+      toast.error(detail);
       return;
     }
 
@@ -656,7 +659,8 @@ export const CreditRisk: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5">
           <Dialog
             open={isNewAssessmentOpen}
             onOpenChange={(open) => {
@@ -901,6 +905,8 @@ export const CreditRisk: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
+          <LoanRiskInfoPopover language={language} />
+          </div>
 
           <Dialog
             open={isObjectionOpen}

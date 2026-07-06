@@ -25,9 +25,9 @@
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
-// Tight output cap: the JSON result is small and this keeps the request within
-// low-credit OpenRouter budgets (avoids HTTP 402).
-const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "800");
+// Tight output cap: the JSON result is small. Keep low enough for OpenRouter
+// free-tier credit limits (402 when max_tokens exceeds affordable budget).
+const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "300");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
