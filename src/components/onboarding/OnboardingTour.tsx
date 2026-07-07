@@ -275,7 +275,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
 
           {/* Highlight ring */}
           <div
-            className="fixed z-[9999] pointer-events-none rounded-xl border-2 border-[hsl(217,91%,55%)] shadow-[0_0_0_4px_rgba(59,130,246,0.25),0_0_24px_rgba(59,130,246,0.35)] transition-all duration-300 ease-out"
+            className="fixed z-[9999] pointer-events-none rounded-xl border-2 border-primary/80 shadow-[0_0_0_4px_hsl(var(--primary)/0.2),0_0_24px_hsl(var(--primary)/0.3)] transition-all duration-300 ease-out"
             style={{
               top: spotlight.top,
               left: spotlight.left,
@@ -301,31 +301,31 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
             role="dialog"
             aria-modal="true"
             aria-labelledby="onboarding-welcome-title"
-            className="pointer-events-auto w-full max-w-lg rounded-2xl border border-[hsl(217,70%,85%)] bg-white shadow-2xl shadow-blue-900/20 animate-in zoom-in-95 fade-in duration-300 overflow-hidden"
+            className="pointer-events-auto w-full max-w-lg rounded-2xl border border-primary/20 bg-card text-card-foreground shadow-2xl shadow-primary/20 animate-in zoom-in-95 fade-in duration-300 overflow-hidden"
           >
-            <div className="bg-gradient-to-br from-[hsl(217,91%,48%)] to-[hsl(224,76%,38%)] px-6 py-8 text-center text-white">
+            <div className="bg-gradient-to-br from-primary to-primary-dark px-6 py-8 text-center text-primary-foreground">
               <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/25 backdrop-blur-sm">
-                <Bot className="h-11 w-11 text-white" strokeWidth={1.5} />
+                <Bot className="h-11 w-11 text-primary-foreground" strokeWidth={1.5} />
               </div>
-              <Sparkles className="mx-auto mb-2 h-5 w-5 text-blue-200 opacity-90" />
+              <Sparkles className="mx-auto mb-2 h-5 w-5 text-rose-200 opacity-90" />
             </div>
             <div className="px-6 py-6 space-y-4">
-              <h2 id="onboarding-welcome-title" className="text-xl font-bold text-slate-900 text-center">
+              <h2 id="onboarding-welcome-title" className="text-xl font-bold text-card-foreground text-center">
                 {welcome.title}
               </h2>
-              <p className="text-sm leading-relaxed text-slate-600 text-center">{welcome.description}</p>
+              <p className="text-sm leading-relaxed text-muted-foreground text-center">{welcome.description}</p>
               <div className="flex flex-col sm:flex-row gap-2 pt-2">
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 border-slate-200"
+                  className="flex-1 border-border"
                   onClick={finish}
                 >
                   Skip
                 </Button>
                 <Button
                   type="button"
-                  className="flex-1 bg-[hsl(217,91%,48%)] hover:bg-[hsl(217,91%,42%)] text-white shadow-md shadow-blue-500/25"
+                  className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md shadow-primary/25"
                   onClick={startSteps}
                 >
                   {welcome.startLabel ?? 'Start Tour'}
@@ -343,7 +343,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
           role="dialog"
           aria-modal="true"
           className={cn(
-            'fixed z-[10001] w-[min(calc(100vw-24px),360px)] rounded-2xl border border-[hsl(217,70%,88%)] bg-white shadow-2xl shadow-blue-900/15',
+            'fixed z-[10001] w-[min(calc(100vw-24px),360px)] rounded-2xl border border-primary/20 bg-card text-card-foreground shadow-2xl shadow-primary/10',
             'animate-in fade-in slide-in-from-bottom-2 duration-300'
           )}
           style={
@@ -352,35 +352,35 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
               : { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
           }
         >
-          <div className="h-1.5 rounded-t-2xl bg-gradient-to-r from-[hsl(217,91%,48%)] to-[hsl(199,89%,48%)]" />
+          <div className="h-1.5 rounded-t-2xl bg-gradient-to-r from-primary to-primary-light" />
           <div className="p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1.5 min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(217,91%,48%)]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary">
                   Step {stepIndex + 1} of {steps.length}
                 </p>
-                <h3 className="text-lg font-bold text-slate-900 leading-snug">{currentStep.title}</h3>
+                <h3 className="text-lg font-bold leading-snug">{currentStep.title}</h3>
               </div>
               <button
                 type="button"
                 onClick={finish}
-                className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                 aria-label="Skip tour"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <p className="text-sm leading-relaxed text-slate-600">{currentStep.description}</p>
+            <p className="text-sm leading-relaxed text-muted-foreground">{currentStep.description}</p>
 
             {targetMissing && (
-              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+              <p className="text-xs text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30 rounded-lg px-3 py-2">
                 Target element not found — you can skip or continue.
               </p>
             )}
 
             <div className="flex items-center justify-between gap-2 pt-1">
-              <Button type="button" variant="ghost" size="sm" className="text-slate-500" onClick={finish}>
+              <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={finish}>
                 Skip
               </Button>
               <div className="flex gap-2">
@@ -390,7 +390,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
                   size="sm"
                   disabled={isFirst}
                   onClick={goPrev}
-                  className="gap-1 border-slate-200"
+                  className="gap-1 border-border"
                 >
                   <ChevronLeft className="h-4 w-4" />
                   Previous
@@ -399,7 +399,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
                   type="button"
                   size="sm"
                   onClick={goNext}
-                  className="gap-1 bg-[hsl(217,91%,48%)] hover:bg-[hsl(217,91%,42%)] text-white"
+                  className="gap-1 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm shadow-primary/10"
                 >
                   {isLast ? 'Finish' : 'Next'}
                   {!isLast && <ChevronRight className="h-4 w-4" />}
