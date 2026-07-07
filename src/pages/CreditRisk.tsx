@@ -7,6 +7,7 @@ import { useCreditRiskStats } from '@/hooks/useStats';
 import { StatValue } from '@/components/StatValue';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { useHelpTarget } from '@/hooks/useHelpTarget';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -649,6 +650,68 @@ export const CreditRisk: React.FC = () => {
     app.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const creditActionsRef = useHelpTarget({
+    id: "credit-actions",
+    category: language === 'ar' ? 'أدوات الائتمان' : 'Credit Tools',
+    title: language === 'ar' ? 'أدوات إجراءات الائتمان' : 'Credit Action Tools',
+    description: language === 'ar'
+      ? 'مركز العمليات الرئيسي لإجراء تقييمات القروض. يسمح ببدء تقييمات جديدة بالذكاء الاصطناعي، والاطلاع على شروط الائتمان، وتقديم اعتراضات أو تعديلات على سجلات حالية.'
+      : 'Primary action center for executing loan assessments. Allows starting new AI evaluations, viewing credit rules, and raising objections/requests to modify existing records.',
+    actions: language === 'ar'
+      ? [
+          'اضغط على "تقييم جديد" لتحليل طلب قرض لعميل بإدخال رقم حسابه.',
+          'اضغط على "اعتراض / تعديل" لطلب تغيير في حقول طلب منتهي في حال وجود خطأ في البيانات.',
+          'الاطلاع على سياسات شروط وقوانين الائتمان المصرفي.'
+        ]
+      : [
+          'Click "New Assessment" to analyze a customer loan request by entering their account number.',
+          'Click "Objection / Modification" to request a change on a finalized application if data was incorrect.',
+          'View risk framework policies and parameters using the info popover.'
+        ]
+  });
+
+  const creditStatsRef = useHelpTarget({
+    id: "credit-stats",
+    category: language === 'ar' ? 'إحصائيات الائتمان' : 'Credit Metrics',
+    title: language === 'ar' ? 'مؤشرات تقييم المخاطر' : 'Risk Assessment Metrics',
+    description: language === 'ar'
+      ? 'يلخص إحصائيات المخاطر لجميع طلبات الائتمان التي تم تحليلها بواسطة محرك الذكاء الاصطناعي. يتتبع توزيع مستويات خطورة المخاطر (منخفضة، متوسطة، عالية) لمراقبة جودة المحفظة.'
+      : 'Summarizes risk statistics for all credit applications analyzed by the AI engine. It tracks the distribution of risk severity levels (Low, Medium, High) to monitor portfolio quality.',
+    actions: language === 'ar'
+      ? [
+          'تقييم العدد الإجمالي لعمليات تحليل الائتمان.',
+          'متابعة القروض المصنفة كمخاطر منخفضة (احتمالية موافقة عالية).',
+          'متابعة القروض التي تحتوي على تنبيهات (مخاطر متوسطة).',
+          'مراقبة الطلبات عالية الخطورة للحد من احتمالات التعثر.'
+        ]
+      : [
+          'Assess the total number of credit evaluations.',
+          'Track loans labeled low risk (high probability of approval).',
+          'Track loans with warning flags (medium risk).',
+          'Monitor high-risk applications to mitigate potential default.'
+        ]
+  });
+
+  const creditTableRef = useHelpTarget({
+    id: "credit-applications-table",
+    category: language === 'ar' ? 'الطلبات' : 'Applications',
+    title: language === 'ar' ? 'سجل طلبات الائتمان' : 'Credit Applications Directory',
+    description: language === 'ar'
+      ? 'جدول تفصيلي يوضح طلبات القروض الائتمانية. يعرض معرفات الطلبات الفريدة، وأسماء العملاء، والمبالغ المطلوبة، ودرجة مخاطر الذكاء الاصطناعي، وحالة الموافقة الحالية.'
+      : 'A detailed table showing credit loan requests. Displays unique application IDs, customer names, requested amounts, the AI risk score/badge, and the current workflow approval status.',
+    actions: language === 'ar'
+      ? [
+          'البحث عن الطلبات بواسطة المعرف أو اسم العميل.',
+          'النقر على أيقونة العين لعرض تقرير تفسير المخاطر المفصل بالذكاء الاصطناعي.',
+          'يمكن لمسؤولي المخاطر الموافقة أو الرفض مباشرة للطلبات المعلقة.'
+        ]
+      : [
+          'Search applications by ID or customer name.',
+          'Click the eye icon to view the deep AI risk explanation report.',
+          'Risk officers can directly Approve or Reject pending applications using the inline actions.'
+        ]
+  });
+
   return (
     <DashboardLayout>
       <PageOnboardingTour tourId="credit-risk" />
@@ -664,8 +727,8 @@ export const CreditRisk: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2">
+          <div ref={creditActionsRef as any} className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
           <LoanRiskInfoPopover language={language} />
           <Dialog
             open={isNewAssessmentOpen}
@@ -1050,7 +1113,7 @@ export const CreditRisk: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div ref={creditStatsRef as any} className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="stat-card">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -1108,7 +1171,7 @@ export const CreditRisk: React.FC = () => {
         </div>
 
         {/* Applications Table */}
-        <Card data-tour-target="assessment-table">
+        <Card ref={creditTableRef as any} data-tour-target="assessment-table">
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>

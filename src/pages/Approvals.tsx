@@ -6,6 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useApprovalStats } from '@/hooks/useStats';
 import { StatValue } from '@/components/StatValue';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { HelpTarget } from '@/components/help';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -295,228 +296,268 @@ export const Approvals: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
-                  </p>
-                  <p className="text-2xl font-bold">
-                    <StatValue loading={statsLoading} error={statsError} value={stats.pending.toLocaleString()} />
-                  </p>
+        <HelpTarget
+          id="approvals-stats"
+          category={language === 'ar' ? 'الإحصائيات' : 'Metrics'}
+          title={language === 'ar' ? 'ملخص لوحة الموافقات' : 'Approvals Dashboard Summary'}
+          description={language === 'ar'
+            ? 'يوفر مؤشرات سريعة عن طلبات الموافقة الائتمانية المعلقة والعاجلة، والموافقات التي تمت معالجتها اليوم، ومتوسط مدة المراجعة.'
+            : 'Provides snapshot indicators of pending and urgent credit approvals, approvals processed today, and average review duration.'}
+          actions={language === 'ar'
+            ? [
+                'مراقبة عدد الملفات المعلقة والمطلوب مراجعتها.',
+                'متابعة الطلبات ذات الأولوية القصوى أو العاجلة لتجنب التأخير.',
+                'ملاحظة التقدم اليومي لسرعة المعالجة ومتوسط أوقات المراجعة.'
+              ]
+            : [
+                'Monitor the count of pending files requiring review.',
+                'Track high-priority or urgent requests to avoid delays.',
+                'Observe daily progress on processing speed and average review times.'
+              ]}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
+                    </p>
+                    <p className="text-2xl font-bold">
+                      <StatValue loading={statsLoading} error={statsError} value={stats.pending.toLocaleString()} />
+                    </p>
+                  </div>
+                  <Clock className="h-8 w-8 text-warning opacity-50" />
                 </div>
-                <Clock className="h-8 w-8 text-warning opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'عاجل' : 'Urgent'}
-                  </p>
-                  <p className="text-2xl font-bold text-destructive">
-                    <StatValue loading={statsLoading} error={statsError} value={stats.urgent.toLocaleString()} />
-                  </p>
+              </CardContent>
+            </Card>
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'عاجل' : 'Urgent'}
+                    </p>
+                    <p className="text-2xl font-bold text-destructive">
+                      <StatValue loading={statsLoading} error={statsError} value={stats.urgent.toLocaleString()} />
+                    </p>
+                  </div>
+                  <AlertTriangle className="h-8 w-8 text-destructive opacity-50" />
                 </div>
-                <AlertTriangle className="h-8 w-8 text-destructive opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
-                  </p>
-                  <p className="text-2xl font-bold text-success">
-                    <StatValue loading={statsLoading} error={statsError} value={stats.approvedToday.toLocaleString()} />
-                  </p>
+              </CardContent>
+            </Card>
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
+                    </p>
+                    <p className="text-2xl font-bold text-success">
+                      <StatValue loading={statsLoading} error={statsError} value={stats.approvedToday.toLocaleString()} />
+                    </p>
+                  </div>
+                  <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
                 </div>
-                <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
-                  </p>
-                  <p className="text-2xl font-bold">
-                    <StatValue
-                      loading={statsLoading}
-                      error={statsError}
-                      value={`${stats.avgProcessTimeHours}h`}
-                    />
-                  </p>
+              </CardContent>
+            </Card>
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
+                    </p>
+                    <p className="text-2xl font-bold">
+                      <StatValue
+                        loading={statsLoading}
+                        error={statsError}
+                        value={`${stats.avgProcessTimeHours}h`}
+                      />
+                    </p>
+                  </div>
+                  <TrendingUp className="h-8 w-8 text-primary opacity-50" />
                 </div>
-                <TrendingUp className="h-8 w-8 text-primary opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </CardContent>
+            </Card>
+          </div>
+        </HelpTarget>
 
         {/* Approvals Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{language === 'ar' ? 'طلبات الموافقة' : 'Approval Requests'}</CardTitle>
-            <CardDescription>
-              {language === 'ar' 
-                ? 'جميع طلبات الموافقة المعلقة والمعالجة' 
-                : 'All pending and processed approval requests'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
-              <TabsList>
-                <TabsTrigger value="pending">
-                  {language === 'ar' ? 'معلقة' : 'Pending'} ({pendingApprovals.length})
-                </TabsTrigger>
-                <TabsTrigger value="processed">
-                  {language === 'ar' ? 'معالجة' : 'Processed'} ({processedApprovals.length})
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+        <HelpTarget
+          id="approvals-table"
+          category={language === 'ar' ? 'الموافقات' : 'Approvals'}
+          title={language === 'ar' ? 'جدول الموافقات وسير العمل' : 'Workflow Approvals Table'}
+          description={language === 'ar'
+            ? 'يسرد مهام موافقة المشرفين المعلقة أو المعالجة، ويوضح تفاصيل العميل، والمبلغ المطلوب، وفئة مخاطر الذكاء الاصطناعي، وحالة الأولوية.'
+            : 'Lists specific pending or processed supervisor approval tasks, detailing applicant parameters, amounts, AI risk categories, and priority status.'}
+          actions={language === 'ar'
+            ? [
+                'التبديل بين القوائم "المعلقة" و"المعالجة".',
+                'اضغط على علامة الصح للموافقة أو علامة إكس للرفض للطلبات الائتمانية.',
+                'اضغط على أيقونة العين لفحص تفاصيل تقرير المخاطر وتفسيرها بالذكاء الاصطناعي.'
+              ]
+            : [
+                'Toggle between "Pending" and "Processed" lists.',
+                'Click the checkmark to approve or the X to reject credit requests.',
+                'Click the eye icon to inspect the detailed AI risk explanation report.'
+              ]}
+        >
+          <Card>
+            <CardHeader>
+              <CardTitle>{language === 'ar' ? 'طلبات الموافقة' : 'Approval Requests'}</CardTitle>
+              <CardDescription>
+                {language === 'ar' 
+                  ? 'جميع طلبات الموافقة المعلقة والمعالجة' 
+                  : 'All pending and processed approval requests'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+                <TabsList>
+                  <TabsTrigger value="pending">
+                    {language === 'ar' ? 'معلقة' : 'Pending'} ({pendingApprovals.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="processed">
+                    {language === 'ar' ? 'معالجة' : 'Processed'} ({processedApprovals.length})
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{language === 'ar' ? 'الطلب' : 'Request'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'النوع' : 'Type'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'العميل' : 'Customer'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'الموظف' : 'Employee'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'المبلغ' : 'Amount'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'المخاطر' : 'Risk'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'الأولوية' : 'Priority'}</TableHead>
-                  <TableHead>{language === 'ar' ? 'الإجراءات' : 'Actions'}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading && (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                      {language === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
-                    </TableCell>
+                    <TableHead>{language === 'ar' ? 'الطلب' : 'Request'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'النوع' : 'Type'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'العميل' : 'Customer'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'الموظف' : 'Employee'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'المبلغ' : 'Amount'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'المخاطر' : 'Risk'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'الأولوية' : 'Priority'}</TableHead>
+                    <TableHead>{language === 'ar' ? 'الإجراءات' : 'Actions'}</TableHead>
                   </TableRow>
-                )}
-                {!isLoading && filteredApprovals.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                      {language === 'ar' ? 'لا توجد طلبات' : 'No requests found'}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {filteredApprovals.map((approval) => (
-                  <TableRow key={approval.id}>
-                    <TableCell className="font-medium">{approval.id}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {approval.type === 'credit' && (language === 'ar' ? 'ائتمان' : 'Credit')}
-                        {approval.type === 'document' && (language === 'ar' ? 'مستند' : 'Document')}
-                        {approval.type === 'exception' && (language === 'ar' ? 'استثناء' : 'Exception')}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{approval.customerName}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="p-1.5 rounded-full bg-muted">
-                          <User className="h-3 w-3" />
-                        </div>
-                        {approval.employeeName}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {approval.amount ? `₪${approval.amount.toLocaleString()}` : '—'}
-                    </TableCell>
-                    <TableCell>
-                      {approval.reanalysisStatus === 'failed' ? (
-                        <Badge className="bg-destructive/10 text-destructive border-destructive/20">
-                          {language === 'ar' ? 'بحاجة لإعادة تحليل' : 'Needs re-analysis'}
+                </TableHeader>
+                <TableBody>
+                  {isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                        {language === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isLoading && filteredApprovals.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                        {language === 'ar' ? 'لا توجد طلبات' : 'No requests found'}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {filteredApprovals.map((approval) => (
+                    <TableRow key={approval.id}>
+                      <TableCell className="font-medium">{approval.id}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">
+                          {approval.type === 'credit' && (language === 'ar' ? 'ائتمان' : 'Credit')}
+                          {approval.type === 'document' && (language === 'ar' ? 'مستند' : 'Document')}
+                          {approval.type === 'exception' && (language === 'ar' ? 'استثناء' : 'Exception')}
                         </Badge>
-                      ) : approval.riskScore ? (
+                      </TableCell>
+                      <TableCell>{approval.customerName}</TableCell>
+                      <TableCell>
                         <div className="flex items-center gap-2">
-                          <Progress 
-                            value={approval.riskScore} 
-                            className={cn(
-                              "w-12 h-2",
-                              approval.riskCategory === 'low' && "[&>div]:bg-success",
-                              approval.riskCategory === 'medium' && "[&>div]:bg-warning",
-                              approval.riskCategory === 'high' && "[&>div]:bg-destructive"
+                          <div className="p-1.5 rounded-full bg-muted">
+                            <User className="h-3 w-3" />
+                          </div>
+                          {approval.employeeName}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {approval.amount ? `₪${approval.amount.toLocaleString()}` : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {approval.reanalysisStatus === 'failed' ? (
+                          <Badge className="bg-destructive/10 text-destructive border-destructive/20">
+                            {language === 'ar' ? 'بحاجة لإعادة تحليل' : 'Needs re-analysis'}
+                          </Badge>
+                        ) : approval.riskScore ? (
+                          <div className="flex items-center gap-2">
+                            <Progress 
+                              value={approval.riskScore} 
+                              className={cn(
+                                "w-12 h-2",
+                                approval.riskCategory === 'low' && "[&>div]:bg-success",
+                                approval.riskCategory === 'medium' && "[&>div]:bg-warning",
+                                approval.riskCategory === 'high' && "[&>div]:bg-destructive"
+                              )}
+                            />
+                            <Badge className={getRiskColor(approval.riskCategory)}>
+                              {approval.riskScore}
+                            </Badge>
+                          </div>
+                        ) : '—'}
+                      </TableCell>
+                      <TableCell>{getPriorityBadge(approval.priority, language)}</TableCell>
+                      <TableCell>
+                        {approval.status === 'pending' ? (
+                          <div className="flex gap-1">
+                            {isRole(ROLES.RISK) && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-success hover:text-success"
+                                  onClick={() => handleAction(approval, 'approve')}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => handleAction(approval, 'reject')}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </>
                             )}
-                          />
-                          <Badge className={getRiskColor(approval.riskCategory)}>
-                            {approval.riskScore}
-                          </Badge>
-                        </div>
-                      ) : '—'}
-                    </TableCell>
-                    <TableCell>{getPriorityBadge(approval.priority, language)}</TableCell>
-                    <TableCell>
-                      {approval.status === 'pending' ? (
-                        <div className="flex gap-1">
-                          {isRole(ROLES.RISK) && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-success hover:text-success"
-                                onClick={() => handleAction(approval, 'approve')}
-                              >
-                                <CheckCircle2 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-destructive hover:text-destructive"
-                                onClick={() => handleAction(approval, 'reject')}
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openRiskExplanation(approval)}
-                            title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <Badge className={
-                            approval.status === 'approved'
-                              ? 'bg-success/10 text-success'
-                              : 'bg-destructive/10 text-destructive'
-                          }>
-                            {approval.status === 'approved'
-                              ? (language === 'ar' ? 'موافق عليه' : 'Approved')
-                              : (language === 'ar' ? 'مرفوض' : 'Rejected')}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openRiskExplanation(approval)}
-                            title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openRiskExplanation(approval)}
+                              title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <Badge className={
+                              approval.status === 'approved'
+                                ? 'bg-success/10 text-success'
+                                : 'bg-destructive/10 text-destructive'
+                            }>
+                              {approval.status === 'approved'
+                                ? (language === 'ar' ? 'موافق عليه' : 'Approved')
+                                : (language === 'ar' ? 'مرفوض' : 'Rejected')}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openRiskExplanation(approval)}
+                              title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </HelpTarget>
 
         {/* Modification requests — visible to manager (view) and risk (view + review) */}
         {(isRole(ROLES.MANAGER) || isRole(ROLES.RISK)) && (

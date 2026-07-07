@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BoPLogo } from '@/components/BoPLogo';
+import { HelpWidget, HelpOverlay, HelpExplanationPanel } from '@/components/help';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -274,6 +275,11 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
           {children}
         </div>
       </main>
+
+      {/* Global Help System */}
+      <HelpWidget />
+      <HelpOverlay />
+      <HelpExplanationPanel />
     </div>
   );
 };

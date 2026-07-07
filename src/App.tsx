@@ -19,6 +19,7 @@ import ModificationRequests from "./pages/ModificationRequests";
 import UserManagement from "./pages/UserManagement";
 import Unauthorized from "./pages/Unauthorized";
 import NotFound from "./pages/NotFound";
+import { HelpProvider } from "@/components/help";
 
 const queryClient = new QueryClient();
 
@@ -159,17 +160,19 @@ const AppRoutes = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <LanguageProvider>
-      <AuthProvider>
-        <AIChatProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <AppRoutes />
-          </BrowserRouter>
-        </TooltipProvider>
-        </AIChatProvider>
-      </AuthProvider>
+      <HelpProvider>
+        <AuthProvider>
+          <AIChatProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <AppRoutes />
+            </BrowserRouter>
+          </TooltipProvider>
+          </AIChatProvider>
+        </AuthProvider>
+      </HelpProvider>
     </LanguageProvider>
   </QueryClientProvider>
 );

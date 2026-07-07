@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { HelpTarget } from '@/components/help';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -242,223 +243,263 @@ export const AIAssistant: React.FC = () => {
 
         <div className="flex-1 flex gap-4 min-h-0">
           {/* History sidebar */}
-          <Card className="hidden md:flex w-72 lg:w-80 flex-col min-h-0 shrink-0">
-            <CardHeader className="pb-3 space-y-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <History className="h-4 w-4" />
-                {language === 'ar' ? 'السجل' : 'History'}
-              </CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full gap-2 justify-start"
-                onClick={startNewChat}
-                disabled={isLoading || conversationLoading}
-              >
-                <Plus className="h-4 w-4" />
-                {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
-              </Button>
-            </CardHeader>
-            <CardContent className="flex-1 min-h-0 p-0 pt-0">
-              <ScrollArea className="h-full px-4 pb-4">
-                <HistoryList
-                  history={history}
-                  historyLoading={historyLoading}
-                  activeConversationId={activeConversationId}
-                  isLoading={isLoading}
-                  conversationLoading={conversationLoading}
-                  language={language}
-                  onSelect={handleSelectConversation}
-                />
-              </ScrollArea>
-            </CardContent>
-          </Card>
+          <HelpTarget
+            id="ai-history"
+            category={language === 'ar' ? 'المساعد الذكي' : 'AI Assistant'}
+            title={language === 'ar' ? 'سجل محادثات المساعد' : 'AI Conversation History'}
+            description={language === 'ar'
+              ? 'يعرض جميع محادثاتك السابقة مع مساعد المعرفة الذكي. يمكنك استرجاع الجلسات السابقة أو بدء محادثة جديدة كلياً.'
+              : 'Displays all your past chat conversations with the AI Knowledge Assistant. You can retrieve previous sessions or start a fresh thread.'}
+            actions={language === 'ar'
+              ? [
+                  'اضغط على "محادثة جديدة" لبدء جلسة نظيفة.',
+                  'اختر أي محادثة في القائمة لإعادة تحميل الاستفسارات والإجابات السابقة.'
+                ]
+              : [
+                  'Click "New Chat" to start a clean session.',
+                  'Select any conversation in the list to reload past queries and responses.'
+                ]}
+            className="hidden md:flex shrink-0"
+          >
+            <Card className="w-72 lg:w-80 flex-col min-h-0 h-full">
+              <CardHeader className="pb-3 space-y-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  {language === 'ar' ? 'السجل' : 'History'}
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-2 justify-start"
+                  onClick={startNewChat}
+                  disabled={isLoading || conversationLoading}
+                >
+                  <Plus className="h-4 w-4" />
+                  {language === 'ar' ? 'محادثة جديدة' : 'New chat'}
+                </Button>
+              </CardHeader>
+              <CardContent className="flex-1 min-h-0 p-0 pt-0">
+                <ScrollArea className="h-full px-4 pb-4">
+                  <HistoryList
+                    history={history}
+                    historyLoading={historyLoading}
+                    activeConversationId={activeConversationId}
+                    isLoading={isLoading}
+                    conversationLoading={conversationLoading}
+                    language={language}
+                    onSelect={handleSelectConversation}
+                  />
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          </HelpTarget>
 
           {/* Main chat */}
-          <Card className="flex-1 flex flex-col min-h-0" data-tour-target="ai-chat">
-            <CardContent className="flex-1 flex flex-col p-0 min-h-0">
-              <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-                {conversationLoading ? (
-                  <div className="flex items-center justify-center h-full py-16 text-muted-foreground text-sm">
-                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                    {language === 'ar' ? 'جارٍ تحميل المحادثة...' : 'Loading conversation...'}
-                  </div>
-                ) : messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center py-10 px-4">
-                    <div className="p-4 rounded-full bg-primary/10 mb-4">
-                      <Bot className="h-12 w-12 text-primary" />
+          <HelpTarget
+            id="ai-chat"
+            category={language === 'ar' ? 'المساعد الذكي' : 'AI Assistant'}
+            title={language === 'ar' ? 'لوحة محادثة المساعد الذكي' : 'Interactive AI Chat Console'}
+            description={language === 'ar'
+              ? 'واجهة ذكاء اصطناعي للاستعلام عن سياسات وقوانين وتعميمات بنك فلسطين الداخلية. يقرأ المحرك المستندات، ويستخرج الأجزاء المعنية، ويعرض المصادر المعتمدة.'
+              : 'An AI interface to query internal Bank of Palestine policies, rules, and circulars. The engine reads documents, extracts sections, and shows source citations.'}
+            actions={language === 'ar'
+              ? [
+                  'اضغط على الأسئلة المقترحة للاستعلام الفوري عن سياسات البنك.',
+                  'اكتب أسئلتك الخاصة في حقل الإدخال بالأسفل.',
+                  'راجع المصادر المذكورة أسفل إجابة المساعد للتحقق من دقة المعلومات.'
+                ]
+              : [
+                  'Click suggested questions to query bank policies instantly.',
+                  'Type custom compliance questions in the input field.',
+                  'Review source citations below the assistant\'s answer for validation.'
+                ]}
+            className="flex-1 min-h-0"
+          >
+            <Card className="flex flex-col min-h-0 h-full" data-tour-target="ai-chat">
+              <CardContent className="flex-1 flex flex-col p-0 min-h-0">
+                <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
+                  {conversationLoading ? (
+                    <div className="flex items-center justify-center h-full py-16 text-muted-foreground text-sm">
+                      <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                      {language === 'ar' ? 'جارٍ تحميل المحادثة...' : 'Loading conversation...'}
                     </div>
-                    <h3 className="text-xl font-semibold mb-2">
-                      {language === 'ar' ? 'مرحباً! كيف يمكنني مساعدتك؟' : 'Hello! How can I help you?'}
-                    </h3>
-                    <p className="text-muted-foreground max-w-md text-sm">
-                      {language === 'ar'
-                        ? 'اختر سؤالاً مقترحاً أو اكتب سؤالك أدناه.'
-                        : 'Pick a suggested question or type your own below.'}
-                    </p>
-                    <SuggestedQuestions
-                      onSelect={(q) => void handleSuggestedQuestion(q)}
-                      disabled={isLoading || conversationLoading}
-                    />
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={cn('flex gap-3', message.role === 'user' && 'flex-row-reverse')}
-                      >
+                  ) : messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center py-10 px-4">
+                      <div className="p-4 rounded-full bg-primary/10 mb-4">
+                        <Bot className="h-12 w-12 text-primary" />
+                      </div>
+                      <h3 className="text-xl font-semibold mb-2">
+                        {language === 'ar' ? 'مرحباً! كيف يمكنني مساعدتك؟' : 'Hello! How can I help you?'}
+                      </h3>
+                      <p className="text-muted-foreground max-w-md text-sm">
+                        {language === 'ar'
+                          ? 'اختر سؤالاً مقترحاً أو اكتب سؤالك أدناه.'
+                          : 'Pick a suggested question or type your own below.'}
+                      </p>
+                      <SuggestedQuestions
+                        onSelect={(q) => void handleSuggestedQuestion(q)}
+                        disabled={isLoading || conversationLoading}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {messages.map((message) => (
                         <div
-                          className={cn(
-                            'p-2 rounded-full flex-shrink-0',
-                            message.role === 'user' ? 'bg-primary' : 'bg-muted'
-                          )}
-                        >
-                          {message.role === 'user' ? (
-                            <User className="h-5 w-5 text-primary-foreground" />
-                          ) : (
-                            <Bot className="h-5 w-5 text-muted-foreground" />
-                          )}
-                        </div>
-
-                        <div
-                          className={cn(
-                            'flex-1 max-w-[85%]',
-                            message.role === 'user' && 'text-right'
-                          )}
+                          key={message.id}
+                          className={cn('flex gap-3', message.role === 'user' && 'flex-row-reverse')}
                         >
                           <div
                             className={cn(
-                              'rounded-2xl p-4',
-                              message.role === 'user'
-                                ? 'bg-primary text-primary-foreground rounded-tr-md'
-                                : 'bg-muted rounded-tl-md'
+                              'p-2 rounded-full flex-shrink-0',
+                              message.role === 'user' ? 'bg-primary' : 'bg-muted'
                             )}
                           >
-                            <p
-                              className={cn(
-                                'whitespace-pre-wrap',
-                                isArabicText(message.content) ? 'text-right' : 'text-left'
-                              )}
-                              dir={isArabicText(message.content) ? 'rtl' : 'ltr'}
-                            >
-                              {message.content}
-                            </p>
+                            {message.role === 'user' ? (
+                              <User className="h-5 w-5 text-primary-foreground" />
+                            ) : (
+                              <Bot className="h-5 w-5 text-muted-foreground" />
+                            )}
                           </div>
 
-                          {message.role === 'assistant' && (
-                            <div className="mt-2 space-y-2">
-                              {message.sources && message.sources.length > 0 && (
-                                <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-                                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
-                                    <BookOpen className="h-3.5 w-3.5" />
-                                    {language === 'ar' ? 'المصادر' : 'Sources'}
-                                  </div>
-                                  <div className="space-y-1">
-                                    {message.sources.map((source, index) => (
-                                      <div key={index} className="flex items-center gap-1.5 text-xs">
-                                        <span className="font-mono text-foreground">{source.fileName}</span>
-                                        <span className="text-muted-foreground">→</span>
-                                        <span
-                                          className="text-muted-foreground"
-                                          dir={isArabicText(source.sectionTitle) ? 'rtl' : 'ltr'}
-                                        >
-                                          {source.sectionTitle}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
+                          <div
+                            className={cn(
+                              'flex-1 max-w-[85%]',
+                              message.role === 'user' && 'text-right'
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                'rounded-2xl p-4',
+                                message.role === 'user'
+                                  ? 'bg-primary text-primary-foreground rounded-tr-md'
+                                  : 'bg-muted rounded-tl-md'
                               )}
+                            >
+                              <p
+                                className={cn(
+                                  'whitespace-pre-wrap',
+                                  isArabicText(message.content) ? 'text-right' : 'text-left'
+                                )}
+                                dir={isArabicText(message.content) ? 'rtl' : 'ltr'}
+                              >
+                                {message.content}
+                              </p>
+                            </div>
 
-                              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                                <div className="flex gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={() => handleFeedback(message.id, true)}
-                                  >
-                                    <ThumbsUp className="h-3 w-3" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={() => handleFeedback(message.id, false)}
-                                  >
-                                    <ThumbsDown className="h-3 w-3" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={() => handleCopy(message.content)}
-                                  >
-                                    <Copy className="h-3 w-3" />
-                                  </Button>
+                            {message.role === 'assistant' && (
+                              <div className="mt-2 space-y-2">
+                                {message.sources && message.sources.length > 0 && (
+                                  <div className="rounded-lg border border-border/60 bg-background/50 p-3">
+                                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
+                                      <BookOpen className="h-3.5 w-3.5" />
+                                      {language === 'ar' ? 'المصادر' : 'Sources'}
+                                    </div>
+                                    <div className="space-y-1">
+                                      {message.sources.map((source, index) => (
+                                        <div key={index} className="flex items-center gap-1.5 text-xs">
+                                          <span className="font-mono text-foreground">{source.fileName}</span>
+                                          <span className="text-muted-foreground">→</span>
+                                          <span
+                                            className="text-muted-foreground"
+                                            dir={isArabicText(source.sectionTitle) ? 'rtl' : 'ltr'}
+                                          >
+                                            {source.sectionTitle}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                                  <div className="flex gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => handleFeedback(message.id, true)}
+                                    >
+                                      <ThumbsUp className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => handleFeedback(message.id, false)}
+                                    >
+                                      <ThumbsDown className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => handleCopy(message.content)}
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    {isLoading && (
-                      <div className="flex gap-3">
-                        <div className="p-2 rounded-full bg-muted">
-                          <Bot className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                        <div className="bg-muted rounded-2xl rounded-tl-md p-4">
-                          <div className="flex items-center gap-2">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            <span className="text-muted-foreground">{t('ai.thinking')}</span>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </ScrollArea>
+                      ))}
 
-              <div className="p-4 border-t">
-                {sendError && (
-                  <p className="text-sm text-destructive mb-2 text-center" role="alert">
-                    {sendError}
+                      {isLoading && (
+                        <div className="flex gap-3">
+                          <div className="p-2 rounded-full bg-muted">
+                            <Bot className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                          <div className="bg-muted rounded-2xl rounded-tl-md p-4">
+                            <div className="flex items-center gap-2">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-muted-foreground">{t('ai.thinking')}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </ScrollArea>
+
+                <div className="p-4 border-t">
+                  {sendError && (
+                    <p className="text-sm text-destructive mb-2 text-center" role="alert">
+                      {sendError}
+                    </p>
+                  )}
+                  <div className="flex gap-3">
+                    <Input
+                      ref={inputRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder={t('ai.placeholder')}
+                      className="flex-1"
+                      disabled={isLoading || conversationLoading}
+                    />
+                    <Button
+                      type="button"
+                      onClick={() => void handleSend()}
+                      disabled={!input.trim() || isLoading || conversationLoading}
+                      className="gradient-bg"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    {language === 'ar'
+                      ? 'يجيب المساعد من قاعدة المعرفة المصرفية الداخلية فقط. تحقق دائماً من المعلومات المهمة.'
+                      : 'Answers come from the internal bank knowledge base only. Always verify important information.'}
                   </p>
-                )}
-                <div className="flex gap-3">
-                  <Input
-                    ref={inputRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={t('ai.placeholder')}
-                    className="flex-1"
-                    disabled={isLoading || conversationLoading}
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => void handleSend()}
-                    disabled={!input.trim() || isLoading || conversationLoading}
-                    className="gradient-bg"
-                  >
-                    {isLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                  {language === 'ar'
-                    ? 'يجيب المساعد من قاعدة المعرفة المصرفية الداخلية فقط. تحقق دائماً من المعلومات المهمة.'
-                    : 'Answers come from the internal bank knowledge base only. Always verify important information.'}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </HelpTarget>
         </div>
       </div>
     </DashboardLayout>
