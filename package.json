@@ -12,6 +12,8 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "test": "node --experimental-strip-types --test src/lib/__tests__/qa.test.ts",
+    "test:qa": "node --experimental-strip-types --test src/lib/__tests__/qa.test.ts",
     "preview": "vite preview",
     "ingest:policies": "node --env-file=.env scripts/ingest-policies.mjs"
   },
