@@ -60,6 +60,7 @@ import { toast } from 'sonner';
 import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
+import { HelpTarget } from '@/components/help';
 import { useAuth } from '@/contexts/AuthContext';
 import { canOpenAccount } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
@@ -771,8 +772,17 @@ export const Documents: React.FC = () => {
             };
 
             return (
-              <Card
+              <HelpTarget
                 key={task.id}
+                asChild
+                id={`documents-task-${task.id}`}
+                scope="item"
+                category={language === 'ar' ? 'مهمة' : 'Task'}
+                title={t(task.titleKey)}
+                description={t(task.descKey)}
+                disableSelect={!task.available}
+              >
+              <Card
                 data-tour-target={task.id === 'open-account' ? 'open-new-account' : undefined}
                 onClick={handleClick}
                 role={task.available ? 'button' : undefined}
@@ -831,6 +841,7 @@ export const Documents: React.FC = () => {
                   )}
                 </CardContent>
               </Card>
+              </HelpTarget>
             );
           })}
         </div>
@@ -909,6 +920,16 @@ export const Documents: React.FC = () => {
                     </div>
                   ) : (
                     <>
+                      <HelpTarget
+                        asChild
+                        id="documents-id-upload-box"
+                        scope="item"
+                        category={language === 'ar' ? 'رفع ملف' : 'Upload'}
+                        title={language === 'ar' ? 'صندوق رفع الهوية' : 'ID Upload Box'}
+                        description={language === 'ar'
+                          ? 'اسحب وأفلت صورة أو ملف PDF لهوية العميل هنا، أو اضغط لاختيار ملف، لبدء استخراج البيانات تلقائياً.'
+                          : 'Drag and drop the customer\'s ID image or PDF here, or click to browse, to start automatic data extraction.'}
+                      >
                       <div
                         className={cn(
                           'border-2 border-dashed rounded-xl p-8 text-center transition-all',
@@ -963,6 +984,7 @@ export const Documents: React.FC = () => {
                           </>
                         )}
                       </div>
+                      </HelpTarget>
 
                       {extractError && (
                         <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
@@ -1395,58 +1417,124 @@ export const Documents: React.FC = () => {
           </Dialog>
 
         {/* Stats */}
+        <HelpTarget
+          id="documents-stats"
+          scope="section"
+          category={language === 'ar' ? 'الإحصائيات' : 'Metrics'}
+          title={language === 'ar' ? 'ملخص إحصائيات المستندات' : 'Documents Stats Summary'}
+          description={language === 'ar'
+            ? 'نظرة سريعة على إجمالي المستندات المرفوعة وحالتها (مكتمل، قيد المعالجة، معلق).'
+            : 'A quick overview of total uploaded documents and their status (completed, processing, pending).'}
+        >
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'إجمالي المستندات' : 'Total Documents'}
-                  </p>
-                  <p className="text-2xl font-bold">{stats.total}</p>
+          <HelpTarget
+            asChild
+            id="documents-stat-total"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={language === 'ar' ? 'إجمالي المستندات' : 'Total Documents'}
+            description={language === 'ar'
+              ? 'العدد الكلي للمستندات المرفوعة إلى النظام.'
+              : 'The total number of documents uploaded to the system.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'إجمالي المستندات' : 'Total Documents'}
+                    </p>
+                    <p className="text-2xl font-bold">{stats.total}</p>
+                  </div>
+                  <FileText className="h-8 w-8 text-primary opacity-50" />
                 </div>
-                <FileText className="h-8 w-8 text-primary opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{t('docs.completed')}</p>
-                  <p className="text-2xl font-bold text-success">{stats.completed}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="documents-stat-completed"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={t('docs.completed')}
+            description={language === 'ar'
+              ? 'عدد المستندات التي اكتملت معالجتها بنجاح.'
+              : 'The number of documents that finished processing successfully.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{t('docs.completed')}</p>
+                    <p className="text-2xl font-bold text-success">{stats.completed}</p>
+                  </div>
+                  <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
                 </div>
-                <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{t('docs.processing')}</p>
-                  <p className="text-2xl font-bold text-info">{stats.processing}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="documents-stat-processing"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={t('docs.processing')}
+            description={language === 'ar'
+              ? 'عدد المستندات التي ما زالت قيد المعالجة والاستخراج الآلي.'
+              : 'The number of documents still being processed and auto-extracted.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{t('docs.processing')}</p>
+                    <p className="text-2xl font-bold text-info">{stats.processing}</p>
+                  </div>
+                  <Clock className="h-8 w-8 text-info opacity-50" />
                 </div>
-                <Clock className="h-8 w-8 text-info opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'معلق' : 'Pending'}
-                  </p>
-                  <p className="text-2xl font-bold text-warning">{stats.pending}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="documents-stat-pending"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={language === 'ar' ? 'معلق' : 'Pending'}
+            description={language === 'ar'
+              ? 'عدد المستندات التي لم تبدأ معالجتها بعد.'
+              : 'The number of documents that have not started processing yet.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'معلق' : 'Pending'}
+                    </p>
+                    <p className="text-2xl font-bold text-warning">{stats.pending}</p>
+                  </div>
+                  <AlertTriangle className="h-8 w-8 text-warning opacity-50" />
                 </div>
-                <AlertTriangle className="h-8 w-8 text-warning opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </HelpTarget>
         </div>
+        </HelpTarget>
 
         {/* Documents Table */}
+        <HelpTarget
+          id="documents-table"
+          scope="section"
+          category={language === 'ar' ? 'المستندات' : 'Documents'}
+          title={language === 'ar' ? 'جدول المستندات' : 'Documents Table'}
+          description={language === 'ar'
+            ? 'يعرض جميع المستندات المرفوعة مع نوعها وحالتها ونسبة ثقة الاستخراج، ويسمح بعرض أو تنزيل أو حذف كل مستند.'
+            : 'Lists all uploaded documents with their type, status, and extraction confidence, and lets you view, download, or delete each one.'}
+        >
         <Card>
           <CardHeader>
             <CardTitle>{language === 'ar' ? 'المستندات' : 'Documents'}</CardTitle>
@@ -1525,7 +1613,18 @@ export const Documents: React.FC = () => {
                     const Icon = getDocTypeIcon(doc.type);
                     const confidencePct = confidenceToPercent(doc.confidence);
                     return (
-                      <TableRow key={doc.id}>
+                      <HelpTarget
+                        key={doc.id}
+                        asChild
+                        id={`documents-row-${doc.id}`}
+                        scope="item"
+                        category={language === 'ar' ? 'صف مستند' : 'Document Row'}
+                        title={doc.name}
+                        description={language === 'ar'
+                          ? 'صف فردي في جدول المستندات، يمثل ملفاً واحداً وحالته.'
+                          : 'A single row in the Documents table, representing one file and its status.'}
+                      >
+                      <TableRow>
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-muted">
@@ -1535,7 +1634,20 @@ export const Documents: React.FC = () => {
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground capitalize">{doc.type}</TableCell>
-                        <TableCell>{getStatusBadge(doc.status, language)}</TableCell>
+                        <TableCell>
+                          <HelpTarget
+                            id={`documents-status-chip-${doc.id}`}
+                            scope="action"
+                            className="inline-block"
+                            category={language === 'ar' ? 'حالة' : 'Status'}
+                            title={language === 'ar' ? 'حالة المعالجة' : 'Processing Status'}
+                            description={language === 'ar'
+                              ? 'يوضح هذا الوسم الحالة الحالية لمعالجة المستند (مكتمل، قيد المعالجة، معلق، أو فشل).'
+                              : 'This chip shows the current processing status of the document (completed, processing, pending, or failed).'}
+                          >
+                            {getStatusBadge(doc.status, language)}
+                          </HelpTarget>
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {formatDocumentDate(doc, language)}
                         </TableCell>
@@ -1563,49 +1675,83 @@ export const Documents: React.FC = () => {
                         <TableCell className="text-muted-foreground">{doc.size ?? '—'}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title={language === 'ar' ? 'عرض' : 'View'}
-                              disabled={viewingDocId === doc.id}
-                              onClick={() => handleViewDocument(doc)}
+                            <HelpTarget
+                              asChild
+                              id={`documents-view-${doc.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'عرض المستند' : 'View document'}
+                              description={language === 'ar'
+                                ? 'يفتح المستند في نافذة جديدة للمعاينة.'
+                                : 'Opens the document in a new tab for preview.'}
                             >
-                              {viewingDocId === doc.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title={language === 'ar' ? 'تنزيل' : 'Download'}
-                              disabled={downloadingDocId === doc.id}
-                              onClick={() => handleDownloadDocument(doc)}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title={language === 'ar' ? 'عرض' : 'View'}
+                                disabled={viewingDocId === doc.id}
+                                onClick={() => handleViewDocument(doc)}
+                              >
+                                {viewingDocId === doc.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </HelpTarget>
+                            <HelpTarget
+                              asChild
+                              id={`documents-download-${doc.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'تنزيل المستند' : 'Download document'}
+                              description={language === 'ar'
+                                ? 'يبدأ تنزيل الملف الأصلي لهذا المستند.'
+                                : 'Starts downloading the original file for this document.'}
                             >
-                              {downloadingDocId === doc.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Download className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                              title={language === 'ar' ? 'حذف' : 'Delete'}
-                              disabled={deletingDocId === doc.id}
-                              onClick={() => setDocToDelete(doc)}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title={language === 'ar' ? 'تنزيل' : 'Download'}
+                                disabled={downloadingDocId === doc.id}
+                                onClick={() => handleDownloadDocument(doc)}
+                              >
+                                {downloadingDocId === doc.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </HelpTarget>
+                            <HelpTarget
+                              asChild
+                              id={`documents-delete-${doc.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'حذف المستند' : 'Delete document'}
+                              description={language === 'ar'
+                                ? 'يحذف هذا المستند نهائياً بعد التأكيد.'
+                                : 'Permanently deletes this document after confirmation.'}
                             >
-                              {deletingDocId === doc.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )}
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive"
+                                title={language === 'ar' ? 'حذف' : 'Delete'}
+                                disabled={deletingDocId === doc.id}
+                                onClick={() => setDocToDelete(doc)}
+                              >
+                                {deletingDocId === doc.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </HelpTarget>
                           </div>
                         </TableCell>
                       </TableRow>
+                      </HelpTarget>
                     );
                   })
                 )}
@@ -1613,6 +1759,7 @@ export const Documents: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+        </HelpTarget>
 
         <AlertDialog
           open={docToDelete != null}

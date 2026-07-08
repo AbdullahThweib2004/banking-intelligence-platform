@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useHelp } from './HelpProvider';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { pickBestHelpTarget } from '@/lib/helpTargeting';
 
 const HIGHLIGHT_RADIUS = 12;
 
@@ -9,31 +10,15 @@ export const HelpOverlay: React.FC = () => {
   const { direction } = useLanguage();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const mousePosRef = useRef({ x: 0, y: 0 });
+  const targetsRef = useRef(targets);
+  targetsRef.current = targets;
 
-  // Update hover state based on cursor position
+  // Update hover state based on cursor position, delegating the actual
+  // ranking (priority -> specificity -> smallest area) to the shared utility
+  // so hover and click always agree on the same "best" target.
   const updateHover = () => {
-    const { x, y } = mousePosRef.current;
-    let hovered: string | null = null;
-    let minArea = Infinity;
-
-    for (const [id, target] of Object.entries(targets)) {
-      if (!target.element) continue;
-      const rect = target.element.getBoundingClientRect();
-      if (
-        x >= rect.left &&
-        x <= rect.right &&
-        y >= rect.top &&
-        y <= rect.bottom
-      ) {
-        const area = rect.width * rect.height;
-        if (area < minArea) {
-          minArea = area;
-          hovered = id;
-        }
-      }
-    }
-
-    setHoveredId(hovered);
+    const best = pickBestHelpTarget(targetsRef.current, mousePosRef.current);
+    setHoveredId(best?.target.id ?? null);
   };
 
   const handleMouseMove = (e: MouseEvent) => {
@@ -46,13 +31,10 @@ export const HelpOverlay: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Select the currently hovered element
-    if (hoveredId) {
-      setSelectedTargetId(hoveredId);
-    } else {
-      // If clicking on the dim area (outside selected target), deselect it
-      setSelectedTargetId(null);
-    }
+    // Re-resolve at click time rather than trusting stale hover state — guards
+    // against a rerender moving elements between the last mousemove and the click.
+    const best = pickBestHelpTarget(targetsRef.current, mousePosRef.current);
+    setSelectedTargetId(best?.target.id ?? null);
   };
 
   useEffect(() => {
@@ -61,7 +43,6 @@ export const HelpOverlay: React.FC = () => {
       return;
     }
 
-    // Attach listeners with capturing phase to intercept actions
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('click', handleClick, true);
     window.addEventListener('scroll', updateHover, true);
@@ -75,14 +56,36 @@ export const HelpOverlay: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
 
+    // Layout can shift under a stationary cursor (async data loading in,
+    // an accordion expanding, etc). Re-run the hit test whenever the DOM
+    // changes so the highlight never goes stale without a mouse/scroll event.
+    let rafId: number | null = null;
+    const scheduleHoverUpdate = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        updateHover();
+      });
+    };
+    const observer = new MutationObserver(scheduleHoverUpdate);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    });
+
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('click', handleClick, true);
       window.removeEventListener('scroll', updateHover, true);
       window.removeEventListener('resize', updateHover);
       window.removeEventListener('keydown', handleKeyDown);
+      observer.disconnect();
+      if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [isHelpMode, hoveredId, targets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHelpMode]);
 
   if (!isHelpMode) return null;
 
@@ -130,7 +133,7 @@ export const HelpOverlay: React.FC = () => {
       {/* Render active border/ring around the highlighted element */}
       {rect && (
         <div
-          className={`absolute pointer-events-none rounded-xl border-2 transition-all duration-200 ease-out z-[9991] ${
+          className={`absolute pointer-events-none rounded-xl border-2 transition-all duration-150 ease-out z-[9991] ${
             selectedTargetId
               ? 'border-primary shadow-[0_0_0_4px_hsl(var(--primary)/0.25),0_0_30px_hsl(var(--primary)/0.4)]'
               : 'border-primary/60 shadow-[0_0_0_4px_hsl(var(--primary)/0.15),0_0_20px_hsl(var(--primary)/0.25)]'

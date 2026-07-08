@@ -21,10 +21,20 @@ export const HelpExplanationPanel: React.FC = () => {
     setHelpMode(false);
   };
 
+  // `placement` lets a target force which side the panel opens on (useful when
+  // the target itself sits at one edge of the screen); otherwise it follows
+  // the current reading direction as before.
+  const resolvedSide: 'left' | 'right' =
+    target.placement && target.placement !== 'auto'
+      ? target.placement
+      : direction === 'rtl'
+        ? 'left'
+        : 'right';
+
   return (
     <div
       className={`fixed inset-y-0 z-[10005] w-full sm:w-[450px] pointer-events-none flex items-center p-4 ${
-        direction === 'rtl' ? 'left-0 justify-start' : 'right-0 justify-end'
+        resolvedSide === 'left' ? 'left-0 justify-start' : 'right-0 justify-end'
       }`}
     >
       <div
@@ -32,7 +42,7 @@ export const HelpExplanationPanel: React.FC = () => {
         aria-modal="true"
         aria-labelledby="help-panel-title"
         className={`pointer-events-auto h-[min(650px,calc(100vh-32px))] w-full rounded-2xl border border-border/80 bg-card text-card-foreground shadow-2xl animate-in duration-300 flex flex-col overflow-hidden ${
-          direction === 'rtl' ? 'slide-in-from-left-8' : 'slide-in-from-right-8'
+          resolvedSide === 'left' ? 'slide-in-from-left-8' : 'slide-in-from-right-8'
         }`}
       >
         {/* Panel Header */}
@@ -65,6 +75,13 @@ export const HelpExplanationPanel: React.FC = () => {
               {target.title}
             </h2>
           </div>
+
+          {/* Short hint, if provided */}
+          {target.hint && (
+            <p className="text-sm font-medium text-primary bg-primary/10 border border-primary/20 rounded-lg px-3 py-2">
+              {target.hint}
+            </p>
+          )}
 
           {/* Description */}
           <div className="space-y-3">

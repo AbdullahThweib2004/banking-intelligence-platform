@@ -1,12 +1,28 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
+// section: a whole page region (a card group, a table + its chrome).
+// item: one selectable unit inside a section (a single card, a table row).
+// action: a specific control (a button, an icon, a clickable chip).
+// Scope only sets the *default* priority (see helpTargeting.ts) — an
+// explicit `priority` on a target always overrides it.
+export type HelpTargetScope = 'section' | 'item' | 'action';
+export type HelpTargetPlacement = 'left' | 'right' | 'auto';
+
 export interface HelpTargetData {
   id: string;
   title: string;
   description: string;
+  /** Short one-line action/help text, shown above the full description. */
+  hint?: string;
   category?: string;
-  placement?: string;
+  placement?: HelpTargetPlacement;
   actions?: string[];
+  /** Explicit ranking used when multiple registered targets overlap under the pointer. Higher wins. */
+  priority?: number;
+  /** Coarse classification used to derive a default priority when none is given. */
+  scope?: HelpTargetScope;
+  /** Registered for context/nesting only — never itself hoverable/selectable. */
+  disableSelect?: boolean;
   element: HTMLElement;
 }
 

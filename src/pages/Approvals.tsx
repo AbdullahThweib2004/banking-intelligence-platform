@@ -298,6 +298,7 @@ export const Approvals: React.FC = () => {
         {/* Stats */}
         <HelpTarget
           id="approvals-stats"
+          scope="section"
           category={language === 'ar' ? 'الإحصائيات' : 'Metrics'}
           title={language === 'ar' ? 'ملخص لوحة الموافقات' : 'Approvals Dashboard Summary'}
           description={language === 'ar'
@@ -316,76 +317,124 @@ export const Approvals: React.FC = () => {
               ]}
         >
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="stat-card">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
-                    </p>
-                    <p className="text-2xl font-bold">
-                      <StatValue loading={statsLoading} error={statsError} value={stats.pending.toLocaleString()} />
-                    </p>
+            <HelpTarget
+              asChild
+              id="approvals-stat-pending"
+              scope="item"
+              category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+              title={language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
+              description={language === 'ar'
+                ? 'عدد الطلبات التي ما زالت بانتظار قرار الموافقة أو الرفض.'
+                : 'The number of requests still waiting on an approve/reject decision.'}
+            >
+              <Card className="stat-card">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        {language === 'ar' ? 'بانتظار الموافقة' : 'Pending'}
+                      </p>
+                      <p className="text-2xl font-bold">
+                        <StatValue loading={statsLoading} error={statsError} value={stats.pending.toLocaleString()} />
+                      </p>
+                    </div>
+                    <Clock className="h-8 w-8 text-warning opacity-50" />
                   </div>
-                  <Clock className="h-8 w-8 text-warning opacity-50" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="stat-card">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? 'عاجل' : 'Urgent'}
-                    </p>
-                    <p className="text-2xl font-bold text-destructive">
-                      <StatValue loading={statsLoading} error={statsError} value={stats.urgent.toLocaleString()} />
-                    </p>
+                </CardContent>
+              </Card>
+            </HelpTarget>
+
+            <HelpTarget
+              asChild
+              id="approvals-stat-urgent"
+              scope="item"
+              category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+              title={language === 'ar' ? 'عاجل' : 'Urgent'}
+              description={language === 'ar'
+                ? 'عدد الطلبات ذات الأولوية العاجلة والتي تحتاج مراجعة فورية.'
+                : 'The number of urgent-priority requests that need immediate review.'}
+            >
+              <Card className="stat-card">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        {language === 'ar' ? 'عاجل' : 'Urgent'}
+                      </p>
+                      <p className="text-2xl font-bold text-destructive">
+                        <StatValue loading={statsLoading} error={statsError} value={stats.urgent.toLocaleString()} />
+                      </p>
+                    </div>
+                    <AlertTriangle className="h-8 w-8 text-destructive opacity-50" />
                   </div>
-                  <AlertTriangle className="h-8 w-8 text-destructive opacity-50" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="stat-card">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
-                    </p>
-                    <p className="text-2xl font-bold text-success">
-                      <StatValue loading={statsLoading} error={statsError} value={stats.approvedToday.toLocaleString()} />
-                    </p>
+                </CardContent>
+              </Card>
+            </HelpTarget>
+
+            <HelpTarget
+              asChild
+              id="approvals-stat-approved-today"
+              scope="item"
+              category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+              title={language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
+              description={language === 'ar'
+                ? 'عدد الطلبات التي تمت الموافقة عليها خلال اليوم الحالي.'
+                : 'The number of requests approved during the current day.'}
+            >
+              <Card className="stat-card">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        {language === 'ar' ? 'تمت الموافقة اليوم' : 'Approved Today'}
+                      </p>
+                      <p className="text-2xl font-bold text-success">
+                        <StatValue loading={statsLoading} error={statsError} value={stats.approvedToday.toLocaleString()} />
+                      </p>
+                    </div>
+                    <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
                   </div>
-                  <CheckCircle2 className="h-8 w-8 text-success opacity-50" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="stat-card">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      {language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
-                    </p>
-                    <p className="text-2xl font-bold">
-                      <StatValue
-                        loading={statsLoading}
-                        error={statsError}
-                        value={`${stats.avgProcessTimeHours}h`}
-                      />
-                    </p>
+                </CardContent>
+              </Card>
+            </HelpTarget>
+
+            <HelpTarget
+              asChild
+              id="approvals-stat-avg-process-time"
+              scope="item"
+              category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+              title={language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
+              description={language === 'ar'
+                ? 'متوسط الوقت المستغرق لمعالجة طلب موافقة من التقديم حتى القرار.'
+                : 'The average time it takes to process an approval request from submission to decision.'}
+            >
+              <Card className="stat-card">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">
+                        {language === 'ar' ? 'متوسط وقت المعالجة' : 'Avg Process Time'}
+                      </p>
+                      <p className="text-2xl font-bold">
+                        <StatValue
+                          loading={statsLoading}
+                          error={statsError}
+                          value={`${stats.avgProcessTimeHours}h`}
+                        />
+                      </p>
+                    </div>
+                    <TrendingUp className="h-8 w-8 text-primary opacity-50" />
                   </div>
-                  <TrendingUp className="h-8 w-8 text-primary opacity-50" />
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </HelpTarget>
           </div>
         </HelpTarget>
 
         {/* Approvals Table */}
         <HelpTarget
           id="approvals-table"
+          scope="section"
           category={language === 'ar' ? 'الموافقات' : 'Approvals'}
           title={language === 'ar' ? 'جدول الموافقات وسير العمل' : 'Workflow Approvals Table'}
           description={language === 'ar'
@@ -453,7 +502,18 @@ export const Approvals: React.FC = () => {
                     </TableRow>
                   )}
                   {filteredApprovals.map((approval) => (
-                    <TableRow key={approval.id}>
+                    <HelpTarget
+                      key={approval.id}
+                      asChild
+                      id={`approvals-row-${approval.id}`}
+                      scope="item"
+                      category={language === 'ar' ? 'صف طلب' : 'Approval Row'}
+                      title={`${approval.customerName} · ${approval.id.slice(0, 8)}…`}
+                      description={language === 'ar'
+                        ? 'صف فردي في جدول الموافقات، يمثل طلب موافقة واحداً وتفاصيله.'
+                        : 'A single row in the Approvals table, representing one approval request and its details.'}
+                    >
+                    <TableRow>
                       <TableCell className="font-medium">{approval.id}</TableCell>
                       <TableCell>
                         <Badge variant="outline">
@@ -502,32 +562,65 @@ export const Approvals: React.FC = () => {
                           <div className="flex gap-1">
                             {isRole(ROLES.RISK) && (
                               <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-success hover:text-success"
-                                  onClick={() => handleAction(approval, 'approve')}
+                                <HelpTarget
+                                  asChild
+                                  id={`approvals-approve-${approval.id}`}
+                                  scope="action"
+                                  category={language === 'ar' ? 'إجراء' : 'Action'}
+                                  title={language === 'ar' ? 'الموافقة على الطلب' : 'Approve request'}
+                                  description={language === 'ar'
+                                    ? 'يوافق فوراً على طلب الموافقة هذا.'
+                                    : 'Immediately approves this approval request.'}
                                 >
-                                  <CheckCircle2 className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() => handleAction(approval, 'reject')}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-success hover:text-success"
+                                    onClick={() => handleAction(approval, 'approve')}
+                                  >
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  </Button>
+                                </HelpTarget>
+                                <HelpTarget
+                                  asChild
+                                  id={`approvals-reject-${approval.id}`}
+                                  scope="action"
+                                  category={language === 'ar' ? 'إجراء' : 'Action'}
+                                  title={language === 'ar' ? 'رفض الطلب' : 'Reject request'}
+                                  description={language === 'ar'
+                                    ? 'يرفض فوراً طلب الموافقة هذا.'
+                                    : 'Immediately rejects this approval request.'}
                                 >
-                                  <XCircle className="h-4 w-4" />
-                                </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={() => handleAction(approval, 'reject')}
+                                  >
+                                    <XCircle className="h-4 w-4" />
+                                  </Button>
+                                </HelpTarget>
                               </>
                             )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openRiskExplanation(approval)}
+                            <HelpTarget
+                              asChild
+                              id={`approvals-view-${approval.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
                               title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                              description={language === 'ar'
+                                ? 'يفتح تقرير تفسير المخاطر المفصل بالذكاء الاصطناعي لهذا الطلب.'
+                                : 'Opens the detailed AI risk explanation report for this request.'}
                             >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openRiskExplanation(approval)}
+                                title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
                           </div>
                         ) : (
                           <div className="flex items-center gap-1">
@@ -540,18 +633,30 @@ export const Approvals: React.FC = () => {
                                 ? (language === 'ar' ? 'موافق عليه' : 'Approved')
                                 : (language === 'ar' ? 'مرفوض' : 'Rejected')}
                             </Badge>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openRiskExplanation(approval)}
+                            <HelpTarget
+                              asChild
+                              id={`approvals-view-${approval.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
                               title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                              description={language === 'ar'
+                                ? 'يفتح تقرير تفسير المخاطر المفصل بالذكاء الاصطناعي لهذا الطلب.'
+                                : 'Opens the detailed AI risk explanation report for this request.'}
                             >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openRiskExplanation(approval)}
+                                title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
                           </div>
                         )}
                       </TableCell>
                     </TableRow>
+                    </HelpTarget>
                   ))}
                 </TableBody>
               </Table>

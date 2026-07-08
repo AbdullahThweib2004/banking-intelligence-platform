@@ -8,6 +8,7 @@ import { StatValue } from '@/components/StatValue';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useHelpTarget } from '@/hooks/useHelpTarget';
+import { HelpTarget } from '@/components/help';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -652,6 +653,7 @@ export const CreditRisk: React.FC = () => {
 
   const creditActionsRef = useHelpTarget({
     id: "credit-actions",
+    scope: 'section',
     category: language === 'ar' ? 'أدوات الائتمان' : 'Credit Tools',
     title: language === 'ar' ? 'أدوات إجراءات الائتمان' : 'Credit Action Tools',
     description: language === 'ar'
@@ -672,6 +674,7 @@ export const CreditRisk: React.FC = () => {
 
   const creditStatsRef = useHelpTarget({
     id: "credit-stats",
+    scope: 'section',
     category: language === 'ar' ? 'إحصائيات الائتمان' : 'Credit Metrics',
     title: language === 'ar' ? 'مؤشرات تقييم المخاطر' : 'Risk Assessment Metrics',
     description: language === 'ar'
@@ -694,6 +697,7 @@ export const CreditRisk: React.FC = () => {
 
   const creditTableRef = useHelpTarget({
     id: "credit-applications-table",
+    scope: 'section',
     category: language === 'ar' ? 'الطلبات' : 'Applications',
     title: language === 'ar' ? 'سجل طلبات الائتمان' : 'Credit Applications Directory',
     description: language === 'ar'
@@ -729,7 +733,27 @@ export const CreditRisk: React.FC = () => {
 
           <div ref={creditActionsRef as any} className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2">
-          <LoanRiskInfoPopover language={language} />
+          <HelpTarget
+            id="credit-action-risk-info"
+            scope="action"
+            category={language === 'ar' ? 'إجراء' : 'Action'}
+            title={language === 'ar' ? 'سياسات المخاطر' : 'Risk Policy Info'}
+            description={language === 'ar'
+              ? 'يعرض ملخصاً لسياسات وحدود مخاطر الائتمان المعتمدة المستخدمة في حساب الدرجة.'
+              : 'Shows a summary of the approved credit risk policies and thresholds used to compute the score.'}
+          >
+            <LoanRiskInfoPopover language={language} />
+          </HelpTarget>
+          <HelpTarget
+            id="credit-action-new-assessment"
+            scope="action"
+            category={language === 'ar' ? 'إجراء' : 'Action'}
+            title={t('credit.newAssessment')}
+            description={language === 'ar'
+              ? 'يفتح نافذة لبدء تقييم مخاطر ائتماني جديد لعميل عبر إدخال رقم حسابه.'
+              : 'Opens a dialog to start a new AI credit risk assessment for a customer by their account number.'}
+            hint={language === 'ar' ? 'اضغط لبدء تقييم جديد' : 'Click to start a new assessment'}
+          >
           <Dialog
             open={isNewAssessmentOpen}
             onOpenChange={(open) => {
@@ -974,8 +998,19 @@ export const CreditRisk: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
+          </HelpTarget>
           </div>
 
+          <HelpTarget
+            id="credit-action-objection"
+            scope="action"
+            category={language === 'ar' ? 'إجراء' : 'Action'}
+            title={language === 'ar' ? 'اعتراض / تعديل' : 'Objection / Modification'}
+            description={language === 'ar'
+              ? 'يفتح نافذة لطلب تعديل حقل واحد في طلب ائتمان منتهٍ مع ذكر السبب.'
+              : 'Opens a dialog to request a change to a single field on a finalized credit application, with a reason.'}
+            hint={language === 'ar' ? 'اضغط لطلب تعديل على طلب موجود' : 'Click to request a change on an existing application'}
+          >
           <Dialog
             open={isObjectionOpen}
             onOpenChange={(open) => {
@@ -1109,11 +1144,22 @@ export const CreditRisk: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
+          </HelpTarget>
           </div>
         </div>
 
         {/* Stats */}
         <div ref={creditStatsRef as any} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <HelpTarget
+            asChild
+            id="credit-stat-total-assessments"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={language === 'ar' ? 'إجمالي التقييمات' : 'Total Assessments'}
+            description={language === 'ar'
+              ? 'العدد الكلي لعمليات تقييم مخاطر الائتمان التي أجراها النظام.'
+              : 'The total number of credit risk evaluations performed by the system.'}
+          >
           <Card className="stat-card">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -1129,6 +1175,18 @@ export const CreditRisk: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="credit-stat-low-risk"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={t('credit.lowRisk')}
+            description={language === 'ar'
+              ? 'عدد الطلبات المصنفة بمخاطر منخفضة، أي أعلى احتمالية للموافقة.'
+              : 'The number of applications classified as low risk, i.e. the highest likelihood of approval.'}
+          >
           <Card className="stat-card">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -1142,6 +1200,18 @@ export const CreditRisk: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="credit-stat-medium-risk"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={t('credit.mediumRisk')}
+            description={language === 'ar'
+              ? 'عدد الطلبات المصنفة بمخاطر متوسطة وتحتاج مراجعة إضافية قبل الموافقة.'
+              : 'The number of applications classified as medium risk, needing extra review before approval.'}
+          >
           <Card className="stat-card">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -1155,6 +1225,18 @@ export const CreditRisk: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="credit-stat-high-risk"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={t('credit.highRisk')}
+            description={language === 'ar'
+              ? 'عدد الطلبات المصنفة بمخاطر عالية والأكثر عرضة للتعثر أو الرفض.'
+              : 'The number of applications classified as high risk, the most likely to default or be rejected.'}
+          >
           <Card className="stat-card">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
@@ -1168,6 +1250,7 @@ export const CreditRisk: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+          </HelpTarget>
         </div>
 
         {/* Applications Table */}
@@ -1221,27 +1304,49 @@ export const CreditRisk: React.FC = () => {
                   </TableRow>
                 )}
                 {filteredApplications.map((app) => (
-                  <TableRow key={app.id}>
+                  <HelpTarget
+                    key={app.id}
+                    asChild
+                    id={`credit-app-row-${app.id}`}
+                    scope="item"
+                    category={language === 'ar' ? 'صف طلب' : 'Application Row'}
+                    title={`${app.customerName} · ${app.id.slice(0, 8)}…`}
+                    description={language === 'ar'
+                      ? 'صف فردي في جدول طلبات الائتمان، يمثل طلباً واحداً وتفاصيله الأساسية.'
+                      : 'A single row in the Credit Applications table, representing one request and its core details.'}
+                  >
+                  <TableRow>
                     <TableCell className="font-medium">{app.id}</TableCell>
                     <TableCell>{app.customerName}</TableCell>
                     <TableCell>₪{app.loanAmount.toLocaleString()}</TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16">
-                          <Progress 
-                            value={app.riskScore} 
-                            className={cn(
-                              "h-2",
-                              app.riskCategory === 'low' && "[&>div]:bg-success",
-                              app.riskCategory === 'medium' && "[&>div]:bg-warning",
-                              app.riskCategory === 'high' && "[&>div]:bg-destructive"
-                            )}
-                          />
+                      <HelpTarget
+                        asChild
+                        id={`credit-app-risk-${app.id}`}
+                        scope="action"
+                        category={language === 'ar' ? 'درجة المخاطر' : 'Risk Score'}
+                        title={language === 'ar' ? 'درجة المخاطر بالذكاء الاصطناعي' : 'AI Risk Score'}
+                        description={language === 'ar'
+                          ? 'درجة المخاطر المحسوبة بالذكاء الاصطناعي لهذا الطلب مع فئة الخطورة (منخفضة، متوسطة، عالية).'
+                          : 'The AI-computed risk score for this application, along with its risk category (low, medium, high).'}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-16">
+                            <Progress
+                              value={app.riskScore}
+                              className={cn(
+                                "h-2",
+                                app.riskCategory === 'low' && "[&>div]:bg-success",
+                                app.riskCategory === 'medium' && "[&>div]:bg-warning",
+                                app.riskCategory === 'high' && "[&>div]:bg-destructive"
+                              )}
+                            />
+                          </div>
+                          <Badge className={getRiskColor(app.riskCategory)}>
+                            {app.riskScore}
+                          </Badge>
                         </div>
-                        <Badge className={getRiskColor(app.riskCategory)}>
-                          {app.riskScore}
-                        </Badge>
-                      </div>
+                      </HelpTarget>
                     </TableCell>
                     <TableCell>
                       <Badge className={getStatusColor(app.status)}>
@@ -1253,41 +1358,75 @@ export const CreditRisk: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openRiskExplanation(app)}
-                          title={
-                            language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'
-                          }
+                        <HelpTarget
+                          asChild
+                          id={`credit-app-view-${app.id}`}
+                          scope="action"
+                          category={language === 'ar' ? 'إجراء' : 'Action'}
+                          title={language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'}
+                          description={language === 'ar'
+                            ? 'يفتح تقرير تفسير المخاطر المفصل الذي أنشأه الذكاء الاصطناعي لهذا الطلب.'
+                            : 'Opens the detailed AI-generated risk explanation report for this application.'}
                         >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openRiskExplanation(app)}
+                            title={
+                              language === 'ar' ? 'عرض تفسير المخاطر' : 'View risk explanation'
+                            }
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </HelpTarget>
                         {app.status === 'pending' && isRole(ROLES.RISK) && (
                           <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-success hover:text-success"
-                              onClick={() => handleDecision(app, 'approved')}
-                              title={language === 'ar' ? 'موافقة' : 'Approve'}
+                            <HelpTarget
+                              asChild
+                              id={`credit-app-approve-${app.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'الموافقة على الطلب' : 'Approve request'}
+                              description={language === 'ar'
+                                ? 'يوافق فوراً على طلب الائتمان هذا.'
+                                : 'Immediately approves this credit application.'}
                             >
-                              <CheckCircle2 className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => handleDecision(app, 'rejected')}
-                              title={language === 'ar' ? 'رفض' : 'Reject'}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-success hover:text-success"
+                                onClick={() => handleDecision(app, 'approved')}
+                                title={language === 'ar' ? 'موافقة' : 'Approve'}
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
+                            <HelpTarget
+                              asChild
+                              id={`credit-app-reject-${app.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'رفض الطلب' : 'Reject request'}
+                              description={language === 'ar'
+                                ? 'يرفض فوراً طلب الائتمان هذا.'
+                                : 'Immediately rejects this credit application.'}
                             >
-                              <XCircle className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleDecision(app, 'rejected')}
+                                title={language === 'ar' ? 'رفض' : 'Reject'}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
                           </>
                         )}
                       </div>
                     </TableCell>
                   </TableRow>
+                  </HelpTarget>
                 ))}
               </TableBody>
             </Table>
