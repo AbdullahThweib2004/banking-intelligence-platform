@@ -10,6 +10,7 @@ import {
   type OnboardingTourId,
 } from '@/lib/onboardingSession';
 import type { OnboardingStep, OnboardingWelcome } from '@/config/onboardingTours';
+import { useHelp } from '@/components/help';
 
 const PADDING = 12;
 const TOOLTIP_GAP = 16;
@@ -98,6 +99,7 @@ export interface OnboardingTourProps {
 }
 
 export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, welcome }) => {
+  const { isHelpMode } = useHelp();
   const [active, setActive] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
@@ -134,22 +136,35 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ tourId, steps, w
   }, []);
 
   // Auto-start once per page per app session (in-memory only; resets on refresh).
+  // Skipped entirely while help mode is active — the two overlay systems must
+  // never fight for the pointer at once (see subscribeDismissAllTours below).
   useEffect(() => {
-    if (hasAutoShownTour(tourId)) return;
-
-    markAutoShownTour(tourId);
+    if (hasAutoShownTour(tourId) || isHelpMode) return;
 
     const timer = window.setTimeout(() => {
+      if (isHelpMode) return;
+      markAutoShownTour(tourId);
       beginTour();
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [tourId, beginTour]);
+  }, [tourId, beginTour, isHelpMode]);
+
+  // Help mode entering while a tour is mid-flight must close the tour
+  // immediately — its backdrop otherwise outranks the help widget/overlay in
+  // the stacking order, and its own Next/Skip buttons would be unreachable
+  // under help mode's window-level click capture.
+  useEffect(() => {
+    if (isHelpMode) finish();
+  }, [isHelpMode, finish]);
 
   // Manual restart (e.g. Help / "Start tour again") bypasses the auto-show flag.
   useEffect(() => {
-    return subscribeManualTourStart(tourId, beginTour);
-  }, [tourId, beginTour]);
+    return subscribeManualTourStart(tourId, () => {
+      if (isHelpMode) return;
+      beginTour();
+    });
+  }, [tourId, beginTour, isHelpMode]);
 
   const updateLayout = useCallback(() => {
     if (showWelcome || !active || steps.length === 0) return;

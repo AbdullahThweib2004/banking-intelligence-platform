@@ -1,17 +1,32 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useHelp } from './HelpProvider';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { pickBestHelpTarget } from '@/lib/helpTargeting';
 
 const HIGHLIGHT_RADIUS = 12;
 
+// Dev-only, no-op in production builds — safe to leave in.
+const helpDebugLog = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.debug('[help]', ...args);
+};
+
 export const HelpOverlay: React.FC = () => {
   const { isHelpMode, setHelpMode, targets, selectedTargetId, setSelectedTargetId } = useHelp();
   const { direction } = useLanguage();
+  const { pathname } = useLocation();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const mousePosRef = useRef({ x: 0, y: 0 });
   const targetsRef = useRef(targets);
   targetsRef.current = targets;
+
+  useEffect(() => {
+    helpDebugLog('overlay mounted');
+  }, []);
+
+  useEffect(() => {
+    helpDebugLog('route ->', pathname);
+  }, [pathname]);
 
   // Update hover state based on cursor position, delegating the actual
   // ranking (priority -> specificity -> smallest area) to the shared utility
@@ -96,7 +111,7 @@ export const HelpOverlay: React.FC = () => {
 
   // Render svg cutout
   return (
-    <div className="fixed inset-0 z-[9990] pointer-events-auto cursor-help animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-[10011] pointer-events-auto cursor-help animate-in fade-in duration-300">
       <svg
         className="absolute inset-0 w-full h-full pointer-events-none"
         aria-hidden="true"
@@ -133,7 +148,7 @@ export const HelpOverlay: React.FC = () => {
       {/* Render active border/ring around the highlighted element */}
       {rect && (
         <div
-          className={`absolute pointer-events-none rounded-xl border-2 transition-all duration-150 ease-out z-[9991] ${
+          className={`absolute pointer-events-none rounded-xl border-2 transition-all duration-150 ease-out z-[10012] ${
             selectedTargetId
               ? 'border-primary shadow-[0_0_0_4px_hsl(var(--primary)/0.25),0_0_30px_hsl(var(--primary)/0.4)]'
               : 'border-primary/60 shadow-[0_0_0_4px_hsl(var(--primary)/0.15),0_0_20px_hsl(var(--primary)/0.25)]'
@@ -148,7 +163,7 @@ export const HelpOverlay: React.FC = () => {
       )}
 
       {/* Instruction Banner at top */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-card text-card-foreground border border-border px-5 py-3 rounded-full shadow-lg pointer-events-auto flex items-center gap-3 z-[9992] text-sm animate-in slide-in-from-top-4 duration-300">
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-card text-card-foreground border border-border px-5 py-3 rounded-full shadow-lg pointer-events-auto flex items-center gap-3 z-[10013] text-sm animate-in slide-in-from-top-4 duration-300">
         <span className="flex h-2.5 w-2.5 rounded-full bg-primary animate-pulse" />
         <span className="font-medium">
           {direction === 'rtl'

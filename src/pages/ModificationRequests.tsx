@@ -6,6 +6,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card } from '@/components/ui/card';
 import { AlertTriangle } from 'lucide-react';
 import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
+import { HelpTarget } from '@/components/help';
 
 export const ModificationRequests: React.FC = () => {
   const { language } = useLanguage();
@@ -37,7 +38,17 @@ export const ModificationRequests: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <ModificationRequestsPanel enabled={canView} canReview={canReview} />
+        <HelpTarget
+          id="modification-requests-panel"
+          scope="section"
+          category={language === 'ar' ? 'طلبات التعديل' : 'Modification Requests'}
+          title={language === 'ar' ? 'لوحة طلبات التعديل' : 'Modification Requests Panel'}
+          description={language === 'ar'
+            ? 'يعرض طلبات التعديل/الاعتراض المقدمة على الطلبات المنتهية، ويتيح لدائرة المخاطر مراجعتها والموافقة عليها أو رفضها.'
+            : 'Lists modification/objection requests raised against finalized applications, and lets the risk department review, approve, or reject them.'}
+        >
+          <ModificationRequestsPanel enabled={canView} canReview={canReview} />
+        </HelpTarget>
       </div>
     </DashboardLayout>
   );

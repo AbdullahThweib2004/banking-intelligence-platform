@@ -33,7 +33,7 @@ export const HelpExplanationPanel: React.FC = () => {
 
   return (
     <div
-      className={`fixed inset-y-0 z-[10005] w-full sm:w-[450px] pointer-events-none flex items-center p-4 ${
+      className={`fixed inset-y-0 z-[10020] w-full sm:w-[450px] pointer-events-none flex items-center p-4 ${
         resolvedSide === 'left' ? 'left-0 justify-start' : 'right-0 justify-end'
       }`}
     >

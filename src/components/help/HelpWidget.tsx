@@ -10,7 +10,7 @@ export const HelpWidget: React.FC = () => {
   return (
     <button
       onClick={() => setHelpMode(!isHelpMode)}
-      className={`fixed z-[9980] flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 border border-primary-light/35 ${
+      className={`fixed z-[10010] flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 border border-primary-light/35 ${
         direction === 'rtl' ? 'bottom-6 left-6' : 'bottom-6 right-6'
       } group`}
       aria-label="Open page help"

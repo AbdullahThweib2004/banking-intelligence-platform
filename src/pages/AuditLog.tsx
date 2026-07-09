@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { HelpTarget } from '@/components/help';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -364,13 +365,33 @@ export const AuditLog: React.FC = () => {
                 : 'Track all user activities on the platform'}
             </p>
           </div>
-          <Button variant="outline" className="gap-2" onClick={handleExport}>
-            <Download className="h-4 w-4" />
-            {t('common.export')}
-          </Button>
+          <HelpTarget
+            asChild
+            id="audit-log-export"
+            scope="action"
+            category={language === 'ar' ? 'إجراء' : 'Action'}
+            title={t('common.export')}
+            description={language === 'ar'
+              ? 'يصدر السجل المعروض حالياً (بعد الفلترة) كملف CSV.'
+              : 'Exports the currently filtered log view as a CSV file.'}
+          >
+            <Button variant="outline" className="gap-2" onClick={handleExport}>
+              <Download className="h-4 w-4" />
+              {t('common.export')}
+            </Button>
+          </HelpTarget>
         </div>
 
         {/* Stats */}
+        <HelpTarget
+          id="audit-log-stats"
+          scope="section"
+          category={language === 'ar' ? 'الإحصائيات' : 'Metrics'}
+          title={language === 'ar' ? 'ملخص إحصائيات السجل' : 'Audit Log Stats Summary'}
+          description={language === 'ar'
+            ? 'نظرة سريعة على إجمالي الأحداث، أحداث اليوم، المستخدمين النشطين، والتنبيهات.'
+            : 'A quick overview of total events, today\'s events, active users, and alerts.'}
+        >
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card className="stat-card">
             <CardContent className="p-4">
@@ -425,8 +446,18 @@ export const AuditLog: React.FC = () => {
             </CardContent>
           </Card>
         </div>
+        </HelpTarget>
 
         {/* Audit Log Table */}
+        <HelpTarget
+          id="audit-log-table"
+          scope="section"
+          category={language === 'ar' ? 'السجل' : 'Log'}
+          title={language === 'ar' ? 'جدول سجل الأنشطة' : 'Activity Log Table'}
+          description={language === 'ar'
+            ? 'يعرض جميع أحداث النظام مع المستخدم والإجراء والمورد والخطورة. يمكن البحث والتصفية حسب نوع الإجراء أو الخطورة.'
+            : 'Lists every system event with its user, action, resource, and severity. Searchable and filterable by action type or severity.'}
+        >
         <Card>
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -551,6 +582,7 @@ export const AuditLog: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+        </HelpTarget>
       </div>
     </DashboardLayout>
   );

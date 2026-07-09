@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { ROLES, type Role } from '@/lib/roles';
 import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { HelpTarget } from '@/components/help';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -350,6 +351,16 @@ export const UserManagement: React.FC = () => {
             </p>
           </div>
 
+          <HelpTarget
+            id="user-management-add-user"
+            scope="action"
+            category={language === 'ar' ? 'إجراء' : 'Action'}
+            title={t('users.addUser')}
+            description={language === 'ar'
+              ? 'يفتح نافذة لإنشاء حساب مستخدم جديد بتحديد الاسم والبريد الإلكتروني والدور والقسم.'
+              : 'Opens a dialog to create a new user account with a name, email, role, and department.'}
+            hint={language === 'ar' ? 'اضغط لإضافة مستخدم جديد' : 'Click to add a new user'}
+          >
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gradient-bg gap-2">
@@ -442,59 +453,126 @@ export const UserManagement: React.FC = () => {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </HelpTarget>
         </div>
 
         {/* Stats */}
+        <HelpTarget
+          id="user-management-stats"
+          scope="section"
+          category={language === 'ar' ? 'الإحصائيات' : 'Metrics'}
+          title={language === 'ar' ? 'ملخص إحصائيات المستخدمين' : 'User Stats Summary'}
+          description={language === 'ar'
+            ? 'نظرة سريعة على إجمالي المستخدمين وتوزيعهم حسب الدور (مدير، مخاطر، موظف).'
+            : 'A quick overview of total users and their breakdown by role (manager, risk, employee).'}
+        >
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {language === 'ar' ? 'إجمالي المستخدمين' : 'Total Users'}
-                  </p>
-                  <p className="text-2xl font-bold">{stats.total}</p>
+          <HelpTarget
+            asChild
+            id="user-management-stat-total"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={language === 'ar' ? 'إجمالي المستخدمين' : 'Total Users'}
+            description={language === 'ar'
+              ? 'العدد الكلي لحسابات المستخدمين المسجلة في النظام.'
+              : 'The total number of user accounts registered in the system.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {language === 'ar' ? 'إجمالي المستخدمين' : 'Total Users'}
+                    </p>
+                    <p className="text-2xl font-bold">{stats.total}</p>
+                  </div>
+                  <Users className="h-8 w-8 text-primary opacity-50" />
                 </div>
-                <Users className="h-8 w-8 text-primary opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.MANAGER, language)}</p>
-                  <p className="text-2xl font-bold">{stats.managers}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="user-management-stat-managers"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={roleLabel(ROLES.MANAGER, language)}
+            description={language === 'ar'
+              ? 'عدد المستخدمين الذين لديهم دور مدير الفرع.'
+              : 'The number of users with the branch manager role.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{roleLabel(ROLES.MANAGER, language)}</p>
+                    <p className="text-2xl font-bold">{stats.managers}</p>
+                  </div>
+                  <ShieldCheck className="h-8 w-8 text-info opacity-50" />
                 </div>
-                <ShieldCheck className="h-8 w-8 text-info opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.RISK, language)}</p>
-                  <p className="text-2xl font-bold">{stats.risk}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="user-management-stat-risk"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={roleLabel(ROLES.RISK, language)}
+            description={language === 'ar'
+              ? 'عدد المستخدمين الذين لديهم دور دائرة المخاطر.'
+              : 'The number of users with the risk department role.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{roleLabel(ROLES.RISK, language)}</p>
+                    <p className="text-2xl font-bold">{stats.risk}</p>
+                  </div>
+                  <ShieldAlert className="h-8 w-8 text-primary opacity-50" />
                 </div>
-                <ShieldAlert className="h-8 w-8 text-primary opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="stat-card">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{roleLabel(ROLES.EMPLOYEE, language)}</p>
-                  <p className="text-2xl font-bold">{stats.employees}</p>
+              </CardContent>
+            </Card>
+          </HelpTarget>
+
+          <HelpTarget
+            asChild
+            id="user-management-stat-employees"
+            scope="item"
+            category={language === 'ar' ? 'بطاقة إحصائية' : 'Stat Card'}
+            title={roleLabel(ROLES.EMPLOYEE, language)}
+            description={language === 'ar'
+              ? 'عدد المستخدمين الذين لديهم دور موظف فرع.'
+              : 'The number of users with the branch employee role.'}
+          >
+            <Card className="stat-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{roleLabel(ROLES.EMPLOYEE, language)}</p>
+                    <p className="text-2xl font-bold">{stats.employees}</p>
+                  </div>
+                  <Shield className="h-8 w-8 text-muted-foreground opacity-50" />
                 </div>
-                <Shield className="h-8 w-8 text-muted-foreground opacity-50" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </HelpTarget>
         </div>
+        </HelpTarget>
 
         {/* Users Table */}
+        <HelpTarget
+          id="user-management-table"
+          scope="section"
+          category={language === 'ar' ? 'المستخدمون' : 'Users'}
+          title={language === 'ar' ? 'جدول المستخدمين' : 'Users Table'}
+          description={language === 'ar'
+            ? 'يعرض جميع المستخدمين المسجلين مع دورهم وقسمهم وحالتهم، ويتيح تعديل الدور أو الحالة أو حذف المستخدم.'
+            : 'Lists all registered users with their role, department, and status, and lets you change role/status or delete a user.'}
+        >
         <Card>
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -545,7 +623,18 @@ export const UserManagement: React.FC = () => {
                   </TableRow>
                 )}
                 {filteredUsers.map((user) => (
-                  <TableRow key={user.id}>
+                  <HelpTarget
+                    key={user.id}
+                    asChild
+                    id={`user-management-row-${user.id}`}
+                    scope="item"
+                    category={language === 'ar' ? 'صف مستخدم' : 'User Row'}
+                    title={user.fullName ?? user.email ?? user.id}
+                    description={language === 'ar'
+                      ? 'صف فردي في جدول المستخدمين، يمثل حساب مستخدم واحد وتفاصيله.'
+                      : 'A single row in the Users table, representing one user account and its details.'}
+                  >
+                  <TableRow>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -564,6 +653,16 @@ export const UserManagement: React.FC = () => {
                     <TableCell>{getStatusBadge(user.status, language)}</TableCell>
                     <TableCell className="text-muted-foreground">{user.lastLogin ?? '—'}</TableCell>
                     <TableCell>
+                      <HelpTarget
+                        id={`user-management-actions-${user.id}`}
+                        scope="action"
+                        className="inline-block"
+                        category={language === 'ar' ? 'إجراء' : 'Action'}
+                        title={language === 'ar' ? 'إجراءات المستخدم' : 'User Actions'}
+                        description={language === 'ar'
+                          ? 'يفتح قائمة لتغيير دور المستخدم، تعليق أو تفعيل حسابه، أو حذفه.'
+                          : 'Opens a menu to change the user\'s role, suspend/activate their account, or delete them.'}
+                      >
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon">
@@ -616,13 +715,16 @@ export const UserManagement: React.FC = () => {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      </HelpTarget>
                     </TableCell>
                   </TableRow>
+                  </HelpTarget>
                 ))}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
+        </HelpTarget>
       </div>
     </DashboardLayout>
   );

@@ -1,4 +1,9 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
+
+// Dev-only, one-line, no-op in production builds — safe to leave in.
+const helpDebugLog = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.debug('[help]', ...args);
+};
 
 // section: a whole page region (a card group, a table + its chrome).
 // item: one selectable unit inside a section (a single card, a table row).
@@ -40,12 +45,26 @@ const HelpContext = createContext<HelpContextType | undefined>(undefined);
 export const HelpProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isHelpMode, setHelpModeState] = useState(false);
   const [targets, setTargets] = useState<Record<string, HelpTargetData>>({});
-  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [selectedTargetId, setSelectedTargetIdState] = useState<string | null>(null);
+
+  useEffect(() => {
+    helpDebugLog('provider mounted');
+  }, []);
+
+  useEffect(() => {
+    helpDebugLog('registered targets:', Object.keys(targets).length, Object.keys(targets));
+  }, [targets]);
+
+  const setSelectedTargetId = useCallback((id: string | null) => {
+    helpDebugLog('selected target ->', id);
+    setSelectedTargetIdState(id);
+  }, []);
 
   const setHelpMode = useCallback((active: boolean) => {
+    helpDebugLog('help mode ->', active);
     setHelpModeState(active);
     if (!active) {
-      setSelectedTargetId(null);
+      setSelectedTargetIdState(null);
     }
   }, []);
 
@@ -64,20 +83,22 @@ export const HelpProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  return (
-    <HelpContext.Provider
-      value={{
-        isHelpMode,
-        setHelpMode,
-        registerTarget,
-        targets,
-        selectedTargetId,
-        setSelectedTargetId,
-      }}
-    >
-      {children}
-    </HelpContext.Provider>
+  // Consumers that only read e.g. `registerTarget` shouldn't re-render just
+  // because *some other* field on the context changed reference; memoizing
+  // keeps the value identity stable whenever none of these actually changed.
+  const value = useMemo<HelpContextType>(
+    () => ({
+      isHelpMode,
+      setHelpMode,
+      registerTarget,
+      targets,
+      selectedTargetId,
+      setSelectedTargetId,
+    }),
+    [isHelpMode, setHelpMode, registerTarget, targets, selectedTargetId, setSelectedTargetId]
   );
+
+  return <HelpContext.Provider value={value}>{children}</HelpContext.Provider>;
 };
 
 export const useHelp = () => {
