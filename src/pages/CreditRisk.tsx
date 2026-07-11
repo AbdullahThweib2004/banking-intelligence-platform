@@ -51,6 +51,7 @@ import {
   Eye,
   Pencil,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -58,6 +59,7 @@ import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRiskInfoPopover } from '@/components/LoanRiskInfoPopover';
+import { useLatestBankCustomer } from '@/hooks/useLatestBankCustomer';
 
 interface CreditApplication {
   id: string;
@@ -192,6 +194,7 @@ export const CreditRisk: React.FC = () => {
   const { t, language } = useLanguage();
   const { isRole, role, user, profile } = useAuth();
   const { stats, loading: statsLoading, error: statsError } = useCreditRiskStats();
+  const { latest: latestCustomer } = useLatestBankCustomer();
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewAssessmentOpen, setIsNewAssessmentOpen] = useState(false);
   const [riskExplanationOpen, setRiskExplanationOpen] = useState(false);
@@ -798,6 +801,46 @@ export const CreditRisk: React.FC = () => {
                 {/* Account lookup */}
                 <div className="space-y-2">
                   <Label>{language === 'ar' ? 'رقم الحساب' : 'Account Number'}</Label>
+                  {latestCustomer && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountNumber(latestCustomer.account_number);
+                        setCustomerLoaded(false);
+                        setCustomerLoanRestricted(false);
+                      }}
+                      className="flex w-full items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-start text-xs text-muted-foreground transition-colors hover:bg-primary/10"
+                    >
+                      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                      <span>
+                        {language === 'ar' ? (
+                          <>
+                            آخر عميل تمت إضافته لقاعدة البيانات:{' '}
+                            <span className="font-semibold text-foreground">
+                              {latestCustomer.customer_name}
+                            </span>{' '}
+                            — رقم الحساب{' '}
+                            <span className="font-semibold text-primary">
+                              {latestCustomer.account_number}
+                            </span>
+                            . اضغط لاستخدامه.
+                          </>
+                        ) : (
+                          <>
+                            The last customer added to the database is{' '}
+                            <span className="font-semibold text-foreground">
+                              {latestCustomer.customer_name}
+                            </span>{' '}
+                            — account number{' '}
+                            <span className="font-semibold text-primary">
+                              {latestCustomer.account_number}
+                            </span>
+                            . Click to use it.
+                          </>
+                        )}
+                      </span>
+                    </button>
+                  )}
                   <div className="flex gap-2">
                     <Input
                       value={accountNumber}

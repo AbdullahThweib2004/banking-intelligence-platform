@@ -58,6 +58,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
+import { createBankCustomerFromAccountOpening, type BankCustomerRecord } from '@/lib/bankCustomers';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { HelpTarget } from '@/components/help';
@@ -220,6 +221,7 @@ export const Documents: React.FC = () => {
   const [accountSubmitted, setAccountSubmitted] = useState(false);
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
+  const [newCustomerRecord, setNewCustomerRecord] = useState<BankCustomerRecord | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -259,6 +261,7 @@ export const Documents: React.FC = () => {
     setAccountSubmitted(false);
     setReferenceId('');
     setDocumentId('');
+    setNewCustomerRecord(null);
     setSubmitting(false);
     setSubmitError(null);
     setGeneratingPdf(false);
@@ -537,7 +540,7 @@ export const Documents: React.FC = () => {
         .replace(/\s+/g, '_');
 
     try {
-      // Step 4: submit the confirmed fields with the document id.
+      // Step 4a: generate the PDF form / tracking reference via the OCR backend.
       const result = await openNewAccount(
         {
           document_id: documentId,
@@ -551,7 +554,20 @@ export const Documents: React.FC = () => {
         authz
       );
 
-      // Persist completed account opening as a documents row (realtime will sync the table).
+      // Step 4b: create the REAL customer record. This is what actually "opens
+      // the account" — the FastAPI call above only produces paperwork. The DB
+      // trigger assigns a real, unique, sequential BOP-NNNNNN account number;
+      // this call fails loudly (duplicate national ID, insert error, etc.)
+      // rather than silently reporting success without a real account.
+      const customerRecord = await createBankCustomerFromAccountOpening({
+        customerName: customerFullName || accountForm.idNumber.trim(),
+        nationalId: accountForm.idNumber.trim(),
+      });
+      setNewCustomerRecord(customerRecord);
+
+      // Persist completed account opening as a documents row (best-effort —
+      // the PDF/document trail is secondary evidence, not the source of truth
+      // for whether the account exists).
       if (user?.id) {
         try {
           const pdfFilename = result.file_name ?? `${baseName}_account_opening.pdf`;
@@ -593,25 +609,19 @@ export const Documents: React.FC = () => {
         }
       }
 
-      const ref =
-        result.reference_id ??
-        result.id ??
-        `ACC-${new Date().getFullYear()}-${Math.floor(
-          100000 + Math.random() * 900000
-        )}`;
-      setReferenceId(ref);
+      setReferenceId(customerRecord.account_number);
       setAccountSubmitted(true);
 
       await writeAccountAudit(
         'account_opening_complete',
-        ref,
-        `Account opening submitted (${ref}) for ${customerFullName || accountForm.idNumber}`
+        customerRecord.account_number,
+        `Account opened for ${customerRecord.customer_name} — account number ${customerRecord.account_number}`
       );
 
       toast.success(
         language === 'ar'
-          ? 'تم إرسال طلب فتح الحساب'
-          : 'Account opening request submitted'
+          ? `تم إنشاء الحساب بنجاح — رقم الحساب: ${customerRecord.account_number}`
+          : `Account created successfully — account number ${customerRecord.account_number}`
       );
     } catch (err) {
       setSubmitError(
@@ -1267,17 +1277,34 @@ export const Documents: React.FC = () => {
                     </div>
                     <h3 className="text-lg font-semibold">
                       {language === 'ar'
-                        ? 'تم إرسال طلب فتح الحساب'
-                        : 'Account opening request submitted'}
+                        ? 'تمت إضافة العميل إلى قاعدة البيانات بنجاح'
+                        : 'Customer was added to the database successfully'}
                     </h3>
-                    <div className="w-full rounded-lg border border-border bg-muted/40 p-4">
-                      <p className="text-xs text-muted-foreground mb-1">
-                        {language === 'ar' ? 'الرقم المرجعي للطلب' : 'Reference / Document ID'}
+                    {newCustomerRecord && (
+                      <p className="text-sm text-muted-foreground">
+                        {language === 'ar'
+                          ? `تم إنشاء حساب لـ ${newCustomerRecord.customer_name} برقم الحساب ${newCustomerRecord.account_number}.`
+                          : `${newCustomerRecord.customer_name} was added to the database with account number ${newCustomerRecord.account_number}.`}
                       </p>
-                      <p className="text-lg font-semibold tracking-wide text-primary">
+                    )}
+                    <div className="w-full rounded-lg border border-primary/30 bg-primary/5 p-4">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        {language === 'ar' ? 'رقم الحساب' : 'Account Number'}
+                      </p>
+                      <p className="text-2xl font-bold tracking-wide text-primary">
                         {referenceId}
                       </p>
                     </div>
+                    {newCustomerRecord && (
+                      <div className="w-full rounded-lg border border-border bg-muted/40 p-4 text-start">
+                        <p className="text-xs text-muted-foreground mb-1">
+                          {language === 'ar' ? 'اسم العميل' : 'Customer Name'}
+                        </p>
+                        <p className="text-sm font-medium text-foreground">
+                          {newCustomerRecord.customer_name}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
