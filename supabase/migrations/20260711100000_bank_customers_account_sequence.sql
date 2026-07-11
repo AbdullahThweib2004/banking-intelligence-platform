@@ -35,16 +35,23 @@
 -- 1. Sequence -----------------------------------------------------------------
 CREATE SEQUENCE IF NOT EXISTS public.bank_customers_account_number_seq;
 
--- Fast-forward the sequence to continue after the highest existing BOP-NNNNNN
--- account number currently in the table. Falls back to 100010 if the table is
--- empty or has no numeric BOP-* rows yet, so the very first generated number
--- is still BOP-100011 either way.
+-- Fast-forward the sequence to continue after the highest existing
+-- BOP-1NNNNN account number currently in the table. Falls back to 100010 if
+-- the table is empty or has no numeric BOP-1* rows yet, so the very first
+-- generated number is still BOP-100011 either way.
+--
+-- The scan is deliberately restricted to the BOP-1##### family (100000..
+-- 199999) rather than matching any "BOP-<digits>" value — a table that ever
+-- contains an out-of-family account_number (manual test data, an import,
+-- etc.) must never be able to skew this computation. See
+-- 20260711120000_fix_bank_customers_account_sequence.sql for the incident
+-- this specifically guards against.
 DO $$
 DECLARE
   current_max INTEGER;
 BEGIN
   SELECT COALESCE(
-    MAX((regexp_match(account_number, '^BOP-(\d+)$'))[1]::int),
+    MAX((regexp_match(account_number, '^BOP-(1\d{5})$'))[1]::int),
     100010
   )
   INTO current_max

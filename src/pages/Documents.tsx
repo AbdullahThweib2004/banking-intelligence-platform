@@ -51,6 +51,7 @@ import {
   ArrowLeft,
   ScanLine,
   Printer,
+  UserCheck,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -58,7 +59,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
-import { createBankCustomerFromAccountOpening, type BankCustomerRecord } from '@/lib/bankCustomers';
+import { findOrCreateBankCustomerFromAccountOpening, type BankCustomerRecord } from '@/lib/bankCustomers';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { HelpTarget } from '@/components/help';
@@ -222,6 +223,7 @@ export const Documents: React.FC = () => {
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
   const [newCustomerRecord, setNewCustomerRecord] = useState<BankCustomerRecord | null>(null);
+  const [customerWasNew, setCustomerWasNew] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -262,6 +264,7 @@ export const Documents: React.FC = () => {
     setReferenceId('');
     setDocumentId('');
     setNewCustomerRecord(null);
+    setCustomerWasNew(true);
     setSubmitting(false);
     setSubmitError(null);
     setGeneratingPdf(false);
@@ -554,16 +557,18 @@ export const Documents: React.FC = () => {
         authz
       );
 
-      // Step 4b: create the REAL customer record. This is what actually "opens
-      // the account" — the FastAPI call above only produces paperwork. The DB
-      // trigger assigns a real, unique, sequential BOP-NNNNNN account number;
-      // this call fails loudly (duplicate national ID, insert error, etc.)
-      // rather than silently reporting success without a real account.
-      const customerRecord = await createBankCustomerFromAccountOpening({
+      // Step 4b: find-or-create the REAL customer record. This is what
+      // actually "opens the account" — the FastAPI call above only produces
+      // paperwork. If a customer with this national ID already exists (e.g.
+      // the employee re-runs the wizard on the same ID photo), the existing
+      // row and its account number are reused instead of failing — only a
+      // genuinely new national ID gets a new, DB-assigned BOP-1NNNNN number.
+      const { customer: customerRecord, wasCreated } = await findOrCreateBankCustomerFromAccountOpening({
         customerName: customerFullName || accountForm.idNumber.trim(),
         nationalId: accountForm.idNumber.trim(),
       });
       setNewCustomerRecord(customerRecord);
+      setCustomerWasNew(wasCreated);
 
       // Persist completed account opening as a documents row (best-effort —
       // the PDF/document trail is secondary evidence, not the source of truth
@@ -613,15 +618,21 @@ export const Documents: React.FC = () => {
       setAccountSubmitted(true);
 
       await writeAccountAudit(
-        'account_opening_complete',
+        wasCreated ? 'account_opening_complete' : 'account_opening_reused_existing',
         customerRecord.account_number,
-        `Account opened for ${customerRecord.customer_name} — account number ${customerRecord.account_number}`
+        wasCreated
+          ? `Account opened for ${customerRecord.customer_name} — account number ${customerRecord.account_number}`
+          : `Existing customer reused (national ID already on file) — ${customerRecord.customer_name}, account number ${customerRecord.account_number}`
       );
 
       toast.success(
-        language === 'ar'
-          ? `تم إنشاء الحساب بنجاح — رقم الحساب: ${customerRecord.account_number}`
-          : `Account created successfully — account number ${customerRecord.account_number}`
+        wasCreated
+          ? language === 'ar'
+            ? `تم إنشاء الحساب بنجاح — رقم الحساب: ${customerRecord.account_number}`
+            : `Account created successfully — account number ${customerRecord.account_number}`
+          : language === 'ar'
+            ? `هذا العميل موجود بالفعل — رقم الحساب الحالي: ${customerRecord.account_number}`
+            : `This customer already exists — existing account number: ${customerRecord.account_number}`
       );
     } catch (err) {
       setSubmitError(
@@ -1272,26 +1283,50 @@ export const Documents: React.FC = () => {
               {accountStep === 4 &&
                 (accountSubmitted ? (
                   <div className="flex flex-col items-center text-center gap-4 py-4">
-                    <div className="p-4 rounded-full bg-success/10">
-                      <CheckCircle2 className="h-12 w-12 text-success" />
+                    <div className={cn('p-4 rounded-full', customerWasNew ? 'bg-success/10' : 'bg-info/10')}>
+                      {customerWasNew ? (
+                        <CheckCircle2 className="h-12 w-12 text-success" />
+                      ) : (
+                        <UserCheck className="h-12 w-12 text-info" />
+                      )}
                     </div>
                     <h3 className="text-lg font-semibold">
-                      {language === 'ar'
-                        ? 'تمت إضافة العميل إلى قاعدة البيانات بنجاح'
-                        : 'Customer was added to the database successfully'}
+                      {customerWasNew
+                        ? language === 'ar'
+                          ? 'تمت إضافة العميل إلى قاعدة البيانات بنجاح'
+                          : 'Customer was added to the database successfully'
+                        : language === 'ar'
+                          ? 'هذا العميل موجود بالفعل في قاعدة البيانات'
+                          : 'This customer already exists in the database'}
                     </h3>
                     {newCustomerRecord && (
                       <p className="text-sm text-muted-foreground">
-                        {language === 'ar'
-                          ? `تم إنشاء حساب لـ ${newCustomerRecord.customer_name} برقم الحساب ${newCustomerRecord.account_number}.`
-                          : `${newCustomerRecord.customer_name} was added to the database with account number ${newCustomerRecord.account_number}.`}
+                        {customerWasNew
+                          ? language === 'ar'
+                            ? `تم إنشاء حساب لـ ${newCustomerRecord.customer_name} برقم الحساب ${newCustomerRecord.account_number}.`
+                            : `${newCustomerRecord.customer_name} was added to the database with account number ${newCustomerRecord.account_number}.`
+                          : language === 'ar'
+                            ? `تم العثور على ${newCustomerRecord.customer_name} برقم هوية مطابق — تمت إعادة استخدام حسابه الحالي بدلاً من إنشاء حساب مكرر.`
+                            : `${newCustomerRecord.customer_name} was already on file with this national ID — reusing their existing account instead of creating a duplicate.`}
                       </p>
                     )}
-                    <div className="w-full rounded-lg border border-primary/30 bg-primary/5 p-4">
+                    <div
+                      className={cn(
+                        'w-full rounded-lg border p-4',
+                        customerWasNew ? 'border-primary/30 bg-primary/5' : 'border-info/30 bg-info/5'
+                      )}
+                    >
                       <p className="text-xs text-muted-foreground mb-1">
-                        {language === 'ar' ? 'رقم الحساب' : 'Account Number'}
+                        {customerWasNew
+                          ? language === 'ar' ? 'رقم الحساب' : 'Account Number'
+                          : language === 'ar' ? 'رقم الحساب الحالي' : 'Existing Account Number'}
                       </p>
-                      <p className="text-2xl font-bold tracking-wide text-primary">
+                      <p
+                        className={cn(
+                          'text-2xl font-bold tracking-wide',
+                          customerWasNew ? 'text-primary' : 'text-info'
+                        )}
+                      >
                         {referenceId}
                       </p>
                     </div>
