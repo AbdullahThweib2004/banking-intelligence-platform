@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
+import { LOAN_PRODUCTS, LOAN_PRODUCT_IDS, LOAN_CURRENCIES, type LoanProductId, type LoanCurrency } from '@/lib/loanProducts';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRiskInfoPopover } from '@/components/LoanRiskInfoPopover';
 import { useLatestBankCustomer } from '@/hooks/useLatestBankCustomer';
@@ -188,6 +189,15 @@ const EMPTY_ASSESSMENT_FORM = {
   employmentType: '',
   loanAmount: '',
   loanPurpose: '',
+  // --- Bank-calculator-style fields (kept as plain strings in form state,
+  // like employmentType/loanPurpose above; narrowed to their proper literal
+  // types only at submission time) ---
+  loanType: '',
+  loanCurrency: 'ILS',
+  salaryCurrency: 'ILS',
+  monthlyObligations: '',
+  clientAge: '',
+  loanTermYears: '5',
 };
 
 export const CreditRisk: React.FC = () => {
@@ -371,6 +381,14 @@ export const CreditRisk: React.FC = () => {
       employmentType: row.employment_type,
       loanAmount: '',
       loanPurpose: row.loan_purpose,
+      // bank_customers doesn't carry these — start from a sane estimate
+      // (existing loans balance / 12) and let the employee confirm/edit them.
+      loanType: '',
+      loanCurrency: 'ILS',
+      salaryCurrency: 'ILS',
+      monthlyObligations: row.existing_loans ? String(Math.round((row.existing_loans / 12) * 100) / 100) : '',
+      clientAge: '',
+      loanTermYears: '5',
     });
     setCustomerLoanRestricted(isRestricted);
     setCustomerLoaded(true);
@@ -411,17 +429,48 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
+    if (!formData.loanType) {
+      toast.error(language === 'ar' ? 'يرجى اختيار نوع القرض' : 'Please select a loan type');
+      return;
+    }
+
+    const clientAgeNum = Number(formData.clientAge);
+    if (!formData.clientAge || !Number.isFinite(clientAgeNum) || clientAgeNum < 18 || clientAgeNum > 100) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى إدخال عمر صحيح للعميل (18–100)'
+          : 'Please enter a valid client age (18–100)'
+      );
+      return;
+    }
+
+    const loanTermYearsNum = Number(formData.loanTermYears);
+    if (!formData.loanTermYears || !Number.isFinite(loanTermYearsNum) || loanTermYearsNum < 1 || loanTermYearsNum > 30) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى إدخال مدة قرض صحيحة بالسنوات (1–30)'
+          : 'Please enter a valid loan term in years (1–30)'
+      );
+      return;
+    }
+
     const income = Number(formData.monthlyIncome) || 0;
     const expenses = Number(formData.monthlyExpenses) || 0;
     const existing = Number(formData.existingLoans) || 0;
     const requestedLoanAmount = Number(formData.loanAmount) || 0;
+    const monthlyObligations = Number(formData.monthlyObligations) || 0;
+    const loanType = formData.loanType as LoanProductId;
+    const loanCurrency = formData.loanCurrency as LoanCurrency;
+    const salaryCurrency = formData.salaryCurrency as LoanCurrency;
 
     setAssessmentSubmitting(true);
 
-    // The AI service is the source of truth for the assessment result.
+    // The deterministic engine (loanCalculator/loanEligibility/loanRiskScoring)
+    // is always the source of truth here; AI only adds a narrative on top —
+    // see assessCreditRisk()'s own documentation for the full flow.
     let riskSnapshot: SavedRiskExplanation;
-    let source: 'ai' | 'algorithm';
-    let fallbackReason: string | undefined;
+    let source: ResultSource;
+    let aiUnavailableReason: string | undefined;
     try {
       const outcome = await assessCreditRisk({
         monthlyIncome: income,
@@ -430,17 +479,23 @@ export const CreditRisk: React.FC = () => {
         requestedLoanAmount,
         employmentType: formData.employmentType,
         loanPurpose: formData.loanPurpose,
+        loanType,
+        loanCurrency,
+        salaryCurrency,
+        monthlyObligations,
+        clientAge: clientAgeNum,
+        loanTermYears: loanTermYearsNum,
       });
       riskSnapshot = outcome.snapshot;
       source = outcome.source;
-      fallbackReason = outcome.fallbackReason;
+      aiUnavailableReason = outcome.aiUnavailableReason;
       console.info('[credit-risk] assessment outcome', outcome.debug ?? {
         result_source: source,
-        fallback_reason: fallbackReason,
+        ai_unavailable_reason: aiUnavailableReason,
       });
     } catch (err) {
       setAssessmentSubmitting(false);
-      console.error('AI assessment failed:', err);
+      console.error('Assessment failed:', err);
       const detail =
         err instanceof Error && err.message
           ? err.message
@@ -455,6 +510,7 @@ export const CreditRisk: React.FC = () => {
       score: riskSnapshot.risk_score,
       category: riskSnapshot.risk_category,
       recommended_action: riskSnapshot.recommended_action,
+      eligibility_status: riskSnapshot.eligibility_status,
       source,
     });
 
@@ -484,6 +540,21 @@ export const CreditRisk: React.FC = () => {
       notes: formData.loanPurpose
         ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose}`
         : `Account: ${accountNumber.trim()}`,
+      // Bank-calculator-style fields.
+      loan_type: riskSnapshot.loan_type,
+      loan_currency: riskSnapshot.loan_currency,
+      salary_currency: riskSnapshot.salary_currency,
+      monthly_obligations: riskSnapshot.monthly_obligations,
+      client_age: riskSnapshot.client_age,
+      loan_term_years: riskSnapshot.loan_term_years,
+      annual_interest_rate_used: riskSnapshot.annual_interest_rate_used,
+      monthly_installment: riskSnapshot.monthly_installment,
+      total_interest: riskSnapshot.total_interest,
+      total_repaid: riskSnapshot.total_repaid,
+      debt_burden_ratio: riskSnapshot.debt_burden_ratio,
+      age_at_maturity: riskSnapshot.age_at_maturity,
+      eligibility_status: riskSnapshot.eligibility_status,
+      ai_explanation: riskSnapshot.ai_explanation,
     });
 
     setAssessmentSubmitting(false);
@@ -499,15 +570,20 @@ export const CreditRisk: React.FC = () => {
     }
 
     const engineNote =
-      source === 'algorithm'
+      source === 'formula' && aiUnavailableReason
         ? language === 'ar'
-          ? ` (نموذج احتياطي${fallbackReason ? `: ${fallbackReason}` : ''})`
-          : ` (fallback engine${fallbackReason ? `: ${fallbackReason}` : ''})`
+          ? ` (شرح تلقائي — تعذّر شرح الذكاء الاصطناعي: ${aiUnavailableReason})`
+          : ` (deterministic explanation — AI narrative unavailable: ${aiUnavailableReason})`
         : '';
+    const eligibilityNote = riskSnapshot.eligibility_status === 'not_eligible'
+      ? language === 'ar'
+        ? ' — غير مؤهل وفق قواعد النسبة/العمر'
+        : ' — NOT eligible under the DBR/age rules'
+      : '';
     toast.success(
       language === 'ar'
-        ? `تم حساب درجة المخاطر: ${riskSnapshot.risk_score} وإرسال الطلب للموافقة${engineNote}`
-        : `Risk score calculated: ${riskSnapshot.risk_score} — sent for approval${engineNote}`
+        ? `تم حساب درجة المخاطر: ${riskSnapshot.risk_score}${eligibilityNote} وإرسال الطلب للموافقة${engineNote}`
+        : `Risk score calculated: ${riskSnapshot.risk_score}${eligibilityNote} — sent for approval${engineNote}`
     );
     setAssessmentResult(riskSnapshot);
     fetchApplications();
@@ -1007,6 +1083,106 @@ export const CreditRisk: React.FC = () => {
                           </SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="font-semibold">
+                    {language === 'ar' ? 'تفاصيل حاسبة القرض المصرفي' : 'Bank Loan Calculator Details'}
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'نوع القرض' : 'Loan Type'}</Label>
+                      <Select
+                        value={formData.loanType}
+                        onValueChange={(v) => handleInputChange('loanType', v)}
+                        disabled={customerLoanRestricted}
+                      >
+                        <SelectTrigger disabled={customerLoanRestricted}>
+                          <SelectValue placeholder={language === 'ar' ? 'اختر نوع القرض' : 'Select loan type'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LOAN_PRODUCT_IDS.map((id) => (
+                            <SelectItem key={id} value={id}>
+                              {language === 'ar' ? LOAN_PRODUCTS[id].labelAr : LOAN_PRODUCTS[id].labelEn}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'مدة القرض (سنوات)' : 'Loan Term (years)'}</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={formData.loanTermYears}
+                        onChange={(e) => handleInputChange('loanTermYears', e.target.value)}
+                        placeholder="5"
+                        disabled={customerLoanRestricted}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'عملة القرض' : 'Loan Currency'}</Label>
+                      <Select
+                        value={formData.loanCurrency}
+                        onValueChange={(v) => handleInputChange('loanCurrency', v)}
+                        disabled={customerLoanRestricted}
+                      >
+                        <SelectTrigger disabled={customerLoanRestricted}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LOAN_CURRENCIES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'عملة الراتب' : 'Salary Currency'}</Label>
+                      <Select
+                        value={formData.salaryCurrency}
+                        onValueChange={(v) => handleInputChange('salaryCurrency', v)}
+                        disabled={customerLoanRestricted}
+                      >
+                        <SelectTrigger disabled={customerLoanRestricted}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LOAN_CURRENCIES.map((c) => (
+                            <SelectItem key={c} value={c}>{c}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'عمر العميل' : 'Client Age'}</Label>
+                      <Input
+                        type="number"
+                        min={18}
+                        max={100}
+                        value={formData.clientAge}
+                        onChange={(e) => handleInputChange('clientAge', e.target.value)}
+                        placeholder={language === 'ar' ? 'مثال: 35' : 'e.g. 35'}
+                        disabled={customerLoanRestricted}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{language === 'ar' ? 'الالتزامات الشهرية الحالية' : 'Monthly Obligations'}</Label>
+                      <Input
+                        type="number"
+                        value={formData.monthlyObligations}
+                        onChange={(e) => handleInputChange('monthlyObligations', e.target.value)}
+                        placeholder="0.00"
+                        disabled={customerLoanRestricted}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'ar'
+                          ? 'دفعات القروض/الائتمان الحالية شهرياً — تُستخدم لحساب نسبة عبء الدين (DBR).'
+                          : 'Existing monthly loan/credit payments — used to compute the debt burden ratio (DBR).'}
+                      </p>
                     </div>
                   </div>
                 </div>

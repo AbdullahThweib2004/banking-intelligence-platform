@@ -4,12 +4,14 @@ import type {
   CreditScoreResult,
   DerivedFeatures,
   RecommendedAction,
+  ResultSource,
   SavedRiskExplanation,
   SavedTopFactor,
 } from '@/lib/creditScoring';
+import { LOAN_PRODUCTS } from '@/lib/loanProducts';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, Sparkles, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 interface CreditScoreExplanationProps {
   result: CreditScoreResult;
@@ -40,6 +42,17 @@ function formatAssessedAt(iso: string, language: string): string {
   }
 }
 
+function formatMoney(n: number | null | undefined, currency?: string | null): string {
+  if (n == null) return '—';
+  const value = n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return currency ? `${currency} ${value}` : value;
+}
+
+function formatPct(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return `${(n * 100).toFixed(1)}%`;
+}
+
 interface NormalizedFactor {
   key: string;
   label: string;
@@ -48,7 +61,7 @@ interface NormalizedFactor {
   magnitude: string;
 }
 
-/** Normalize either a legacy math FeatureContribution or an AI top factor. */
+/** Normalize either a deterministic FeatureContribution or an AI top factor. */
 function normalizeFactor(factor: SavedTopFactor, index: number, isAr: boolean): NormalizedFactor {
   if ('labelEn' in factor) {
     const increasesRisk = factor.impact > 0;
@@ -123,6 +136,64 @@ function TopFactorsList({
   );
 }
 
+/** Loan-calculator result fields: type, currency, rate, installment, interest, DBR, age-at-maturity. */
+function LoanCalculatorPanel({
+  features,
+  language,
+}: {
+  features: DerivedFeatures;
+  language: string;
+}) {
+  const isAr = language === 'ar';
+  const product = LOAN_PRODUCTS[features.loan_type];
+  const eligible = features.eligibility_status === 'eligible';
+
+  const rows: [string, string][] = [
+    [isAr ? 'نوع القرض' : 'Loan Type', isAr ? product.labelAr : product.labelEn],
+    [isAr ? 'العملة' : 'Currency', features.loan_currency],
+    [isAr ? 'المعدل السنوي المستخدم' : 'Annual Rate Used', formatPct(features.annual_interest_rate_used)],
+    [isAr ? 'مدة القرض' : 'Loan Term', `${features.loan_term_years} ${isAr ? 'سنة' : 'yrs'}`],
+    [isAr ? 'القسط الشهري' : 'Monthly Installment', formatMoney(features.monthly_installment, features.loan_currency)],
+    [isAr ? 'إجمالي الفوائد' : 'Total Interest', formatMoney(features.total_interest, features.loan_currency)],
+    [isAr ? 'إجمالي المسدد' : 'Total Repaid', formatMoney(features.total_repaid, features.loan_currency)],
+    [isAr ? 'نسبة عبء الدين (DBR)' : 'Debt Burden Ratio (DBR)', `${formatPct(features.debt_burden_ratio)} / 50%`],
+    [
+      isAr ? 'العمر عند الاستحقاق' : 'Age at Maturity',
+      features.age_at_maturity == null
+        ? isAr ? 'غير محدد' : 'not provided'
+        : `${features.age_at_maturity} / 70`,
+    ],
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div
+        className={cn(
+          'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium',
+          eligible
+            ? 'border-success/30 bg-success/10 text-success'
+            : 'border-destructive/30 bg-destructive/10 text-destructive'
+        )}
+      >
+        {eligible ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+        <span>
+          {eligible
+            ? isAr ? 'مؤهل وفق قواعد نسبة عبء الدين والعمر عند الاستحقاق' : 'Eligible under the DBR and age-at-maturity rules'
+            : isAr ? 'غير مؤهل — تم تجاوز حد نسبة عبء الدين أو العمر عند الاستحقاق' : 'Not eligible — the DBR or age-at-maturity cap was breached'}
+        </span>
+      </div>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded bg-background p-3 border border-border/60">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-muted-foreground text-xs">{label}</dt>
+            <dd className="font-medium text-foreground text-sm">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function DerivedFeaturesPanel({
   features,
   language,
@@ -133,20 +204,18 @@ function DerivedFeaturesPanel({
   const isAr = language === 'ar';
 
   return (
-    <details className="text-xs text-muted-foreground" open>
+    <details className="text-xs text-muted-foreground">
       <summary className="cursor-pointer font-medium text-sm text-foreground mb-2">
-        {isAr ? 'المؤشرات المالية المشتقة' : 'Derived financial indicators'}
+        {isAr ? 'مؤشرات إضافية (تراثية)' : 'Additional legacy indicators'}
       </summary>
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded bg-background p-3 border border-border/60">
         {[
           [isAr ? 'الدخل الشهري' : 'Monthly income', features.monthly_income],
           [isAr ? 'المصاريف الشهرية' : 'Monthly expenses', features.monthly_expenses],
-          [isAr ? 'القروض الحالية' : 'Existing loans', features.existing_loans],
-          [isAr ? 'مبلغ القرض المطلوب' : 'Requested loan', features.requested_loan_amount],
-          [isAr ? 'قسط القرض الجديد (تقديري)' : 'Est. new loan payment', features.estimated_new_loan_payment],
-          [isAr ? 'نسبة خدمة الدين' : 'Debt service ratio', `${(features.debt_service_ratio * 100).toFixed(1)}%`],
+          [isAr ? 'الالتزامات الشهرية' : 'Monthly obligations', features.monthly_obligations],
           [isAr ? 'الدخل المتاح' : 'Disposable income', features.disposable_income],
           [isAr ? 'نوع التوظيف' : 'Employment', features.employment_type],
+          [isAr ? 'الغرض من القرض' : 'Loan purpose', features.loan_purpose],
         ].map(([label, value]) => (
           <div key={String(label)}>
             <dt className="text-muted-foreground">{label}</dt>
@@ -176,9 +245,9 @@ function ScoreHeader({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-muted-foreground">
-            {isAr ? 'نتيجة تقييم المخاطر' : 'Risk assessment result'}
+            {isAr ? 'نسبة المخاطر المحسوبة' : 'Computed risk percentage'}
           </p>
-          <p className="text-3xl font-bold">{score}</p>
+          <p className="text-3xl font-bold">{score}%</p>
         </div>
         <Badge variant="outline" className={cn('capitalize', categoryStyles[category])}>
           {isAr
@@ -206,9 +275,10 @@ export const CreditScoreExplanation: React.FC<CreditScoreExplanationProps> = ({
   return (
     <div className={cn('rounded-lg border bg-muted/30 p-4 space-y-4', className)}>
       <ScoreHeader score={result.score} category={result.category} language={language} />
+      <LoanCalculatorPanel features={result.features} language={language} />
       <div>
         <p className="text-sm font-semibold mb-2">
-          {isAr ? 'أهم العوامل المؤثرة (SHAP)' : 'Top factors affecting the score (SHAP-style)'}
+          {isAr ? 'أهم العوامل المؤثرة في الدرجة' : 'Top factors affecting the score'}
         </p>
         <TopFactorsList factors={topFactors} language={language} />
       </div>
@@ -230,6 +300,32 @@ function actionLabel(action: RecommendedAction, isAr: boolean): string {
   return action === 'approve' ? 'Approve' : action === 'reject' ? 'Reject' : 'Manual review';
 }
 
+/**
+ * result_source can be one of 4 values: the two legacy ones ('ai' — AI
+ * computed everything, pre-refactor; 'algorithm' — the old math-only
+ * fallback) predate this refactor and are shown as "Legacy AI" / "Legacy
+ * algorithm" so old saved assessments remain legible. New assessments use
+ * 'formula' (deterministic engine only) or 'hybrid' (deterministic engine +
+ * an AI-authored narrative on top).
+ */
+function sourceBadge(source: ResultSource | null | undefined, isAr: boolean): { label: string; icon: React.ReactNode } | null {
+  if (!source) return null;
+  switch (source) {
+    case 'hybrid':
+      return {
+        label: isAr ? 'محرك حسابي + شرح بالذكاء الاصطناعي' : 'Formula + AI explanation',
+        icon: <Sparkles className="h-3 w-3" />,
+      };
+    case 'formula':
+      return { label: isAr ? 'محرك حسابي (بدون AI)' : 'Formula engine (no AI)', icon: null };
+    case 'ai':
+      return { label: isAr ? 'تقييم AI (قديم)' : 'Legacy AI assessment', icon: null };
+    case 'algorithm':
+    default:
+      return { label: isAr ? 'خوارزمية قديمة' : 'Legacy algorithm', icon: null };
+  }
+}
+
 export const SavedRiskExplanationView: React.FC<SavedRiskExplanationViewProps> = ({
   explanation,
   language,
@@ -244,7 +340,10 @@ export const SavedRiskExplanationView: React.FC<SavedRiskExplanationViewProps> =
     typeof explanation.risk_confidence === 'number'
       ? `${Math.round(explanation.risk_confidence * 100)}%`
       : null;
-  const isAi = explanation.result_source === 'ai';
+  const badge = sourceBadge(explanation.result_source, isAr);
+  // Only present when this assessment predates the bank-calculator refactor
+  // (loan_type etc. are null) — legacy assessments still render sensibly.
+  const hasLoanCalculatorFields = explanation.risk_derived_features?.loan_type != null;
 
   return (
     <div className={cn('rounded-lg border bg-muted/30 p-4 space-y-4', className)}>
@@ -254,7 +353,7 @@ export const SavedRiskExplanationView: React.FC<SavedRiskExplanationViewProps> =
         language={language}
       />
 
-      {(action || confidence || explanation.result_source) && (
+      {(action || confidence || badge) && (
         <div className="flex flex-wrap items-center gap-2">
           {action && (
             <Badge variant="outline" className={cn('capitalize', actionStyles[action])}>
@@ -268,15 +367,10 @@ export const SavedRiskExplanationView: React.FC<SavedRiskExplanationViewProps> =
               {confidence}
             </Badge>
           )}
-          {explanation.result_source && (
-            <Badge variant="secondary">
-              {isAi
-                ? isAr
-                  ? 'تقييم بالذكاء الاصطناعي'
-                  : 'AI assessment'
-                : isAr
-                  ? 'نموذج حسابي'
-                  : 'Algorithm'}
+          {badge && (
+            <Badge variant="secondary" className="gap-1">
+              {badge.icon}
+              {badge.label}
             </Badge>
           )}
         </div>
@@ -289,11 +383,24 @@ export const SavedRiskExplanationView: React.FC<SavedRiskExplanationViewProps> =
         </span>
       </p>
 
+      {hasLoanCalculatorFields && (
+        <LoanCalculatorPanel features={explanation.risk_derived_features} language={language} />
+      )}
+
       <div>
         <p className="text-sm font-semibold mb-1">
-          {isAr ? 'ملخص التقييم' : 'Assessment summary'}
+          {explanation.ai_explanation
+            ? isAr ? 'شرح الذكاء الاصطناعي' : 'AI explanation'
+            : isAr ? 'ملخص التقييم' : 'Assessment summary'}
         </p>
         <p className="text-sm text-muted-foreground leading-relaxed">{summary}</p>
+        {!explanation.ai_explanation && (
+          <p className="text-xs text-muted-foreground/70 mt-1 italic">
+            {isAr
+              ? 'شرح تلقائي (ناتج مباشرة عن الأرقام المحسوبة) — لم يتوفر شرح بالذكاء الاصطناعي لهذا التقييم.'
+              : 'Deterministic explanation (generated directly from the computed numbers) — no AI narrative was available for this assessment.'}
+          </p>
+        )}
       </div>
 
       <div>

@@ -79,9 +79,9 @@ describe('creditScoring', () => {
     assert.ok(weak.score > strong.score);
   });
 
-  it('serializeRiskExplanation uses algorithm source', () => {
+  it('serializeRiskExplanation uses the formula source (deterministic engine, no AI narrative)', () => {
     const snap = serializeRiskExplanation(computeCreditScore(baseInput));
-    assert.equal(snap.result_source, 'algorithm');
+    assert.equal(snap.result_source, 'formula');
   });
 
   it('buildDerivedFeatures clamps negatives', () => {

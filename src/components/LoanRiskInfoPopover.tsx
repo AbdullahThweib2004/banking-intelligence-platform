@@ -23,6 +23,8 @@ interface ExplanationSection {
   paragraphs: string[];
   formulas?: string[];
   bullets?: string[];
+  /** Paragraphs rendered after the bullet list (for a caveat/disclaimer following a list). */
+  paragraphsAfterBullets?: string[];
 }
 
 const EXPLANATION_CONTENT: Record<'en' | 'ar', ExplanationSection[]> = {
@@ -30,8 +32,9 @@ const EXPLANATION_CONTENT: Record<'en' | 'ar', ExplanationSection[]> = {
     {
       title: 'Overview',
       paragraphs: [
-        'When you submit a new credit assessment, the system first builds a structured financial profile from the form fields you enter (or load from the customer record). That profile is sent to the AI credit assessment service, which returns the risk score (0–100), category, top factors, and recommended action.',
-        'If the AI service is unavailable, the same derived indicators are scored by a transparent additive fallback model implemented in the application. Both paths use identical derived features so staff always see consistent financial ratios.',
+        'This assessment is modeled on the Bank of Palestine loan-calculator business rules: a debt burden ratio cap, an age-at-maturity cap, and a standard annuity/EMI installment formula, applied per loan product (Personal, Personal Housing, Mortgage Program).',
+        'A deterministic engine built into the application ALWAYS computes the installment, eligibility, and risk score first — this is the source of truth and cannot fail (no network call, no AI). AI is then optionally asked to write a plain-language explanation of that already-final result — it never computes or changes a number.',
+        'If AI is disabled, unreachable, or times out, the same deterministic explanation is shown instead, so staff always get a complete result.',
         'Loan restriction flags on a customer profile block submission entirely — restricted customers are not scored.',
       ],
     },
@@ -39,77 +42,78 @@ const EXPLANATION_CONTENT: Record<'en' | 'ar', ExplanationSection[]> = {
       title: 'Step 1 — Input fields',
       paragraphs: ['The following values are read from the assessment form:'],
       bullets: [
-        'Monthly income (I)',
-        'Monthly expenses (E)',
-        'Existing loans — total outstanding balance (L)',
+        'Loan type — Personal, Personal Housing, or Mortgage Program (drives which rate model applies)',
+        'Loan currency and salary currency (ILS, USD, or JOD)',
+        'Monthly salary (I)',
+        'Monthly obligations — existing monthly loan/credit payments, used for the debt burden ratio',
         'Requested loan amount (P)',
-        'Employment type (employed, self-employed, business, or unknown)',
-        'Loan purpose (informational; included in the AI payload)',
+        'Loan term in years (n years -> n x 12 months)',
+        'Client age',
+        'Employment type (employed, self-employed, business, or unknown) — a minor scoring factor',
         'Restriction status — if the customer is loan-restricted, assessment is blocked before scoring',
       ],
     },
     {
-      title: 'Step 2 — Derived financial indicators',
-      paragraphs: [
-        'Before scoring, the system computes these ratios and payment estimates. Constants used for the new-loan payment: loan term = 60 months, annual interest rate = 9% (0.09).',
+      title: 'Step 2 — Interest rate resolution',
+      paragraphs: ['The effective annual rate depends on the loan product:'],
+      bullets: [
+        'Personal — a fixed annual rate within a configured band for the loan currency.',
+        'Personal Housing / Mortgage Program — an index-based rate (reference index + bank margin), clamped to a configured floor/cap.',
       ],
-      formulas: [
-        'Existing monthly obligation  =  L ÷ 12',
-        'Monthly rate  r  =  0.09 ÷ 12',
-        'Amortization factor  =  (1 + r)^60',
-        'Estimated new loan payment  M  =  (P × r × factor) ÷ (factor − 1)   [if P > 0; else M = 0]',
-        'Total monthly debt service  T  =  E + (L ÷ 12) + M',
-        'Debt service ratio (DSR)  =  T ÷ I   [if I > 0; else DSR = 1]',
-        'Loan-to-annual-income ratio  =  P ÷ (I × 12)',
-        'Loan-to-monthly-income ratio  =  P ÷ I',
-        'Disposable income  =  I − T',
+      paragraphsAfterBullets: [
+        'IMPORTANT: the index numbers (standing in for SOFR / JODIBOR / Prime) and the fixed-rate bands are configured constants maintained in code (src/lib/loanProducts.ts), not a live market feed — there is no live rate integration in this system. Every rate shown is labeled "(configured)" for this reason.',
       ],
     },
     {
-      title: 'Step 3 — AI assessment (primary path)',
+      title: 'Step 3 — Loan payment (EMI / annuity formula)',
       paragraphs: [
-        'The AI receives both raw inputs and all derived indicators above. It returns a JSON result containing: score (integer 0–100), category (low / medium / high), confidence (0–1), summary text, top 3–6 qualitative factors, and recommended_action (approve / manual_review / reject).',
-        'AI category rules mirror the fallback model: Low if score < 40, Medium if 40–69, High if score ≥ 70. Higher debt service ratio, higher loan-to-income ratio, negative disposable income, and unstable employment increase the score in the AI model guidance.',
+        'The standard declining-balance annuity formula, using the resolved annual rate and the chosen term:',
+      ],
+      formulas: [
+        'r  =  annual rate / 12   (monthly rate)',
+        'n  =  loan term in years x 12   (number of months)',
+        'M  =  P x [ r(1+r)^n ] / [ (1+r)^n - 1 ]   (monthly installment)',
+        'Total repaid  =  M x n',
+        'Total interest  =  Total repaid - P',
       ],
     },
     {
-      title: 'Step 4 — Fallback additive score (when AI is unavailable)',
+      title: 'Step 4 — Eligibility rules (hard pass/fail gates)',
       paragraphs: [
-        'Each indicator contributes a number of risk points. Positive points increase risk; negative points reduce it. The raw score is the sum of a base value plus all contributions, then clamped to 0–100.',
+        'These two rules are checked regardless of the risk score. Failing either one makes the application NOT ELIGIBLE, and rejection is recommended even if the score alone looks favorable.',
       ],
       formulas: [
-        'Base score  =  8',
-        'DSR impact  =  min(38, max(0, (DSR − 0.30) × 65))',
-        'Loan amount impact  =  min(22, max(0, (P÷I − 2) × 4.5))',
-        'New payment impact  =  min(18, max(0, (M÷I − 0.15) × 55))',
-        'Existing loans impact  =  min(12, max(0, (L÷12 ÷ I) × 45))',
-        'Expenses impact  =  min(10, max(0, (E÷I − 0.35) × 22))',
-        'If disposable income < 0:',
-        '    Disposable impact  =  min(20, 12 + |disposable| ÷ 100)',
-        'Else:',
-        '    Disposable ratio  =  disposable ÷ I',
-        '    Disposable impact  =  min(12, max(0, (0.12 − disposable ratio) × 40))',
-        'If I < 2,000:  Income impact  =  min(8, (2,000 − I) ÷ 250)',
-        'If I ≥ 2,000:  Income impact  =  max(−5, min(0, (I − 6,000) ÷ −800))   [strong income reduces risk]',
-        'Employment impact:  employed = 0 pts · business = 4 pts · self-employed = 6 pts · unknown = 5 pts',
-        'Raw score  =  8 + sum of all impacts above',
-        'Final score  =  round(clamp(Raw score, 0, 100))',
+        'Debt burden ratio (DBR)  =  (monthly obligations + M) / monthly salary  <=  50%',
+        'Age at maturity  =  client age + loan term (years)  <=  70',
       ],
     },
     {
-      title: 'Step 5 — Risk category & recommended action',
-      paragraphs: ['The final score maps to a category and a suggested next step:'],
+      title: 'Step 5 — Deterministic risk percentage',
+      paragraphs: [
+        'A transparent, weighted model — never a black box. Each factor contributes points; the total is clamped to 0-100. Category bands: Low < 40, Medium 40-69, High >= 70 — an ineligible application is always shown as High risk regardless of this raw total.',
+      ],
       formulas: [
-        'Low risk:     score < 40   →  Recommended: Approve',
-        'Medium risk:  40 ≤ score < 70   →  Recommended: Manual review',
-        'High risk:    score ≥ 70   →  Recommended: Reject',
-        'Negative disposable income strongly pushes toward reject / high risk in both AI and fallback paths.',
+        'Base  =  5',
+        'DBR component        =  (DBR / 50%) x 40         (dominant factor — also a hard eligibility gate)',
+        'Age component         =  min(30, (age at maturity / 70) x 20)',
+        'Term component        =  min(15, (term years / 30) x 15)',
+        'Loan-to-income comp.  =  min(20, (loan / annual salary / 5) x 15)',
+        'Obligations pressure  =  min(10, (obligations / salary / 30%) x 10)',
+        'Employment adjustment =  employed 0, business +2, self-employed +3, unknown +2',
+        'Score  =  clamp(Base + all components above, 0, 100)',
+      ],
+    },
+    {
+      title: 'Step 6 — Recommended action & AI explanation',
+      paragraphs: [
+        'Recommended action: Approve if eligible and Low risk. Manual review if eligible and Medium risk. Reject if High risk OR not eligible (the eligibility gate overrides the score).',
+        'When AI is enabled and reachable, it is given the final score, category, eligibility, DBR, age-at-maturity, installment, and top contributing factors, and asked only to write a short explanation of them in plain language — it cannot change any of these numbers. If AI is disabled, fails, or times out, a deterministic explanation is generated directly from the same numbers instead, so the result is never blank.',
       ],
     },
     {
       title: 'Important note',
       paragraphs: [
-        'The score and category shown after submission reflect the engine that ran (AI or fallback). Top factors in the result view list the largest positive and negative contributors. This explanation supports staff review — it does not replace final human decision-making.',
+        'The result view labels whether the shown explanation is "Formula + AI explanation" (hybrid) or "Formula engine (no AI)" so staff always know which path produced the text. This explanation supports staff review — it does not replace final human decision-making.',
       ],
     },
   ],
@@ -117,8 +121,9 @@ const EXPLANATION_CONTENT: Record<'en' | 'ar', ExplanationSection[]> = {
     {
       title: 'نظرة عامة',
       paragraphs: [
-        'عند إرسال تقييم ائتماني جديد، يبني النظام أولاً ملفاً مالياً منظماً من حقول النموذج (أو من سجل العميل). يُرسَل هذا الملف إلى خدمة تقييم الذكاء الاصطناعي التي تعيد درجة المخاطر (0–100)، والفئة، وأهم العوامل، والإجراء الموصى به.',
-        'إذا تعذّر AI، تُقيَّم نفس المؤشرات المشتقة بنموذج تراكمي شفاف مبرمج في التطبيق. كلا المسارين يستخدمان مؤشرات مشتقة متطابقة.',
+        'يعتمد هذا التقييم على قواعد حاسبة القروض الخاصة ببنك فلسطين: حد أقصى لنسبة عبء الدين، وحد أقصى للعمر عند الاستحقاق، ومعادلة القسط الشهري القياسية (Annuity/EMI)، مطبّقة حسب نوع القرض (شخصي، إسكان شخصي، برنامج رهن عقاري).',
+        'يقوم محرك حسابي داخل التطبيق دائماً بحساب القسط والأهلية ودرجة المخاطر أولاً — وهو المصدر الموثوق ولا يمكن أن يفشل (لا يعتمد على شبكة أو AI). بعد ذلك، يُطلب من AI اختيارياً كتابة شرح واضح للنتيجة النهائية فقط — ولا يقوم أبداً بحساب أو تغيير أي رقم.',
+        'إذا كان AI معطّلاً أو غير متاح أو استغرق وقتاً طويلاً، يُعرض نفس الشرح الحسابي بدلاً منه، بحيث يحصل الموظف دائماً على نتيجة كاملة.',
         'علامات تقييد القرض على ملف العميل تمنع الإرسال — لا يُحسب تقييم للعملاء المقيّدين.',
       ],
     },
@@ -126,77 +131,76 @@ const EXPLANATION_CONTENT: Record<'en' | 'ar', ExplanationSection[]> = {
       title: 'الخطوة 1 — حقول الإدخال',
       paragraphs: ['تُقرأ القيم التالية من نموذج التقييم:'],
       bullets: [
-        'الدخل الشهري (I)',
-        'المصاريف الشهرية (E)',
-        'القروض الحالية — إجمالي الرصيد (L)',
+        'نوع القرض — شخصي، إسكان شخصي، أو برنامج رهن عقاري (يحدد نموذج المعدل المطبّق)',
+        'عملة القرض وعملة الراتب (شيكل، دولار، أو دينار)',
+        'الراتب الشهري (I)',
+        'الالتزامات الشهرية الحالية — تُستخدم لحساب نسبة عبء الدين',
         'مبلغ القرض المطلوب (P)',
-        'نوع التوظيف (موظف، عمل حر، تجاري، أو غير معروف)',
-        'غرض القرض (معلوماتي؛ يُضمّ إلى حمولة AI)',
+        'مدة القرض بالسنوات (n سنة يعني n×12 شهراً)',
+        'عمر العميل',
+        'نوع التوظيف (موظف، عمل حر، تجاري، أو غير معروف) — عامل ثانوي في الدرجة',
         'حالة القيود — إذا كان العميل مقيّداً، يُوقف التقييم قبل الحساب',
       ],
     },
     {
-      title: 'الخطوة 2 — المؤشرات المالية المشتقة',
-      paragraphs: [
-        'قبل التقييم، يحسب النظام النسب التالية. ثوابت القسط الجديد: مدة القرض = 60 شهراً، معدل الفائدة السنوي = 9% (0.09).',
+      title: 'الخطوة 2 — تحديد معدل الفائدة',
+      paragraphs: ['يعتمد المعدل السنوي الفعّال على نوع القرض:'],
+      bullets: [
+        'شخصي — معدل سنوي ثابت ضمن نطاق معلن حسب عملة القرض.',
+        'إسكان شخصي / برنامج رهن عقاري — معدل مرتبط بمؤشر (مؤشر مرجعي + هامش البنك)، محصور بحد أدنى وأقصى معلنين.',
       ],
-      formulas: [
-        'الالتزام الشهري للقروض الحالية  =  L ÷ 12',
-        'المعدل الشهري  r  =  0.09 ÷ 12',
-        'عامل الاستهلاك  =  (1 + r)^60',
-        'القسط الشهري المقدر  M  =  (P × r × factor) ÷ (factor − 1)   [إذا P > 0]',
-        'إجمالي خدمة الدين الشهرية  T  =  E + (L ÷ 12) + M',
-        'نسبة خدمة الدين (DSR)  =  T ÷ I   [إذا I > 0؛ وإلا DSR = 1]',
-        'نسبة القرض إلى الدخل السنوي  =  P ÷ (I × 12)',
-        'نسبة القرض إلى الدخل الشهري  =  P ÷ I',
-        'الدخل المتاح  =  I − T',
+      paragraphsAfterBullets: [
+        'مهم: أرقام المؤشر (التي تمثل SOFR / JODIBOR / Prime) والنطاقات الثابتة هي قيم مُعدّة يدوياً في الكود (src/lib/loanProducts.ts)، وليست تغذية سوقية حية — لا يوجد أي ربط حي بمؤشرات الفائدة في هذا النظام. كل معدل معروض مُعلَّم بعبارة "(مُعدّ يدوياً)" لهذا السبب.',
       ],
     },
     {
-      title: 'الخطوة 3 — تقييم AI (المسار الأساسي)',
-      paragraphs: [
-        'يتلقى AI المدخلات الخام وجميع المؤشرات أعلاه. يعيد JSON يتضمن: الدرجة (0–100)، الفئة (منخفض/متوسط/مرتفع)، الثقة (0–1)، ملخصاً، 3–6 عوامل، وrecommended_action.',
-        'قواعد الفئة: منخفض إذا الدرجة < 40، متوسط 40–69، مرتفع ≥ 70. ارتفاع DSR ونسبة القرض إلى الدخل والدخل المتاح السالب يزيد المخاطر.',
+      title: 'الخطوة 3 — القسط الشهري (معادلة Annuity/EMI)',
+      paragraphs: ['معادلة الاستهلاك المتناقص القياسية، باستخدام المعدل السنوي المحدد والمدة المختارة:'],
+      formulas: [
+        'r  =  المعدل السنوي ÷ 12   (المعدل الشهري)',
+        'n  =  مدة القرض بالسنوات × 12   (عدد الأشهر)',
+        'M  =  P × [ r(1+r)ⁿ ] ÷ [ (1+r)ⁿ − 1 ]   (القسط الشهري)',
+        'إجمالي المسدد  =  M × n',
+        'إجمالي الفوائد  =  إجمالي المسدد − P',
       ],
     },
     {
-      title: 'الخطوة 4 — النموذج التراكمي الاحتياطي',
+      title: 'الخطوة 4 — قواعد الأهلية (حدود صارمة)',
       paragraphs: [
-        'كل مؤشر يساهم بعدد من نقاط المخاطر. النقاط الموجبة ترفع المخاطر والسالبة تخفّضها. المجموع الخام = قاعدة + كل المساهمات، ثم يُحدَّد بين 0 و100.',
+        'يتم فحص هذين الشرطين بغض النظر عن درجة المخاطر. تجاوز أي منهما يجعل الطلب غير مؤهل، ويوصى بالرفض حتى لو بدت الدرجة وحدها جيدة.',
       ],
       formulas: [
-        'الدرجة الأساسية  =  8',
-        'أثر DSR  =  min(38, max(0, (DSR − 0.30) × 65))',
-        'أثر مبلغ القرض  =  min(22, max(0, (P÷I − 2) × 4.5))',
-        'أثر القسط الجديد  =  min(18, max(0, (M÷I − 0.15) × 55))',
-        'أثر القروض الحالية  =  min(12, max(0, (L÷12 ÷ I) × 45))',
-        'أثر المصاريف  =  min(10, max(0, (E÷I − 0.35) × 22))',
-        'إذا الدخل المتاح < 0:',
-        '    أثر الدخل المتاح  =  min(20, 12 + |disposable| ÷ 100)',
-        'وإلا:',
-        '    نسبة الدخل المتاح  =  disposable ÷ I',
-        '    أثر الدخل المتاح  =  min(12, max(0, (0.12 − النسبة) × 40))',
-        'إذا I < 2,000:  أثر الدخل  =  min(8, (2,000 − I) ÷ 250)',
-        'إذا I ≥ 2,000:  أثر الدخل  =  max(−5, min(0, (I − 6,000) ÷ −800))',
-        'أثر التوظيف:  موظف = 0 · تجاري = 4 · عمل حر = 6 · غير معروف = 5',
-        'المجموع الخام  =  8 + مجموع كل الآثار',
-        'الدرجة النهائية  =  round(clamp(المجموع, 0, 100))',
+        'نسبة عبء الدين (DBR)  =  (الالتزامات الشهرية + M) ÷ الراتب الشهري  ≤  50%',
+        'العمر عند الاستحقاق  =  عمر العميل + مدة القرض (سنوات)  ≤  70',
       ],
     },
     {
-      title: 'الخطوة 5 — الفئة والإجراء الموصى به',
-      paragraphs: ['تُحوَّل الدرجة النهائية إلى فئة وخطوة مقترحة:'],
+      title: 'الخطوة 5 — نسبة المخاطر المحسوبة',
+      paragraphs: [
+        'نموذج مرجّح وشفاف تماماً — ليس صندوقاً أسود. كل عامل يساهم بنقاط، ويُحدّ المجموع بين 0 و100. فئات المخاطر: منخفضة < 40، متوسطة 40–69، مرتفعة ≥ 70 — الطلب غير المؤهل يُعرض دائماً كمخاطر مرتفعة بغض النظر عن هذا المجموع الخام.',
+      ],
       formulas: [
-        'مخاطر منخفضة:     الدرجة < 40   →  موافقة',
-        'مخاطر متوسطة:  40 ≤ الدرجة < 70   →  مراجعة يدوية',
-        'مخاطر مرتفعة:    الدرجة ≥ 70   →  رفض',
-        'الدخل المتاح السالب يدفع بقوة نحو الرفض / المخاطر المرتفعة.',
+        'القاعدة  =  5',
+        'أثر نسبة عبء الدين  =  (DBR ÷ 50%) × 40   (العامل الأهم — وأيضاً شرط أهلية صارم)',
+        'أثر العمر  =  min(30, (العمر عند الاستحقاق ÷ 70) × 20)',
+        'أثر المدة  =  min(15, (مدة السنوات ÷ 30) × 15)',
+        'أثر نسبة القرض للدخل  =  min(20, (القرض ÷ الراتب السنوي ÷ 5) × 15)',
+        'أثر ضغط الالتزامات  =  min(10, (الالتزامات ÷ الراتب ÷ 30%) × 10)',
+        'أثر التوظيف  =  موظف 0 · تجاري +2 · عمل حر +3 · غير معروف +2',
+        'الدرجة  =  clamp(القاعدة + كل الآثار أعلاه, 0, 100)',
+      ],
+    },
+    {
+      title: 'الخطوة 6 — الإجراء الموصى به وشرح AI',
+      paragraphs: [
+        'الإجراء الموصى به: موافقة إذا كان مؤهلاً ومخاطر منخفضة · مراجعة يدوية إذا كان مؤهلاً ومخاطر متوسطة · رفض إذا كانت المخاطر مرتفعة أو غير مؤهل (شرط الأهلية يتجاوز الدرجة).',
+        'عند تفعيل AI وتوفره، يُعطى الدرجة والفئة والأهلية ونسبة عبء الدين والعمر عند الاستحقاق والقسط وأهم العوامل النهائية، ويُطلب منه فقط كتابة شرح موجز بلغة واضحة — لا يمكنه تغيير أي من هذه الأرقام. إذا كان AI معطّلاً أو فشل أو استغرق وقتاً طويلاً، يُولَّد شرح حسابي مباشرة من نفس الأرقام بدلاً منه، بحيث لا تكون النتيجة فارغة أبداً.',
       ],
     },
     {
       title: 'ملاحظة مهمة',
       paragraphs: [
-        'الدرجة والفئة المعروضة بعد الإرسال تعكس المحرك الذي عمل (AI أو احتياطي). العوامل الأبرز في النتيجة تسرد أكبر المساهمات. هذا الشرح يدعم قرار الموظف ولا يُغني عن المراجعة البشرية.',
+        'تُظهر شاشة النتيجة ما إذا كان الشرح المعروض "محرك حسابي + شرح بالذكاء الاصطناعي" (مختلط) أو "محرك حسابي (بدون AI)"، بحيث يعرف الموظف دائماً أي مسار أنتج النص. هذا الشرح يدعم قرار الموظف ولا يُغني عن المراجعة البشرية.',
       ],
     },
   ],
@@ -267,8 +271,8 @@ export const LoanRiskInfoPopover: React.FC<LoanRiskInfoPopoverProps> = ({
             </DialogTitle>
             <DialogDescription className="text-sm sm:text-base leading-relaxed">
               {isAr
-                ? 'شرح تفصيلي للمعادلات والمؤشرات المستخدمة لإنتاج درجة المخاطر والفئة والإجراء الموصى به.'
-                : 'Detailed explanation of the equations and indicators used to produce the risk score, category, and recommended action.'}
+                ? 'شرح تفصيلي لقواعد حاسبة القروض والمعادلات المستخدمة لإنتاج القسط الشهري، الأهلية، درجة المخاطر، والإجراء الموصى به.'
+                : 'Detailed explanation of the loan-calculator rules and equations used to produce the installment, eligibility, risk percentage, and recommended action.'}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -300,6 +304,11 @@ export const LoanRiskInfoPopover: React.FC<LoanRiskInfoPopoverProps> = ({
                   ))}
                 </ul>
               )}
+              {section.paragraphsAfterBullets?.map((paragraph) => (
+                <p key={paragraph.slice(0, 40)} className="text-sm text-muted-foreground leading-relaxed italic">
+                  {paragraph}
+                </p>
+              ))}
               {section.formulas && <FormulaBlock lines={section.formulas} />}
             </section>
           ))}

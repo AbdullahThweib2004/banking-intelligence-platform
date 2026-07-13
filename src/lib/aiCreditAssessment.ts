@@ -1,84 +1,64 @@
 /**
- * AI-powered credit risk assessment.
+ * AI explanation layer for credit risk assessment.
  *
- * The AI service is the SOURCE OF TRUTH for the score, category, recommended
- * action and explanation. This module is responsible only for:
- *   1. building a structured financial payload (deterministic feature eng.),
- *   2. requesting the assessment from the secure edge function,
- *   3. strictly parsing/validating the AI JSON response,
- *   4. producing the persistence snapshot (DB columns),
- *   5. optionally falling back to the legacy math engine behind a flag.
+ * ARCHITECTURE: the deterministic engine (creditScoring.ts, backed by
+ * loanCalculator/loanEligibility/loanRiskScoring) is ALWAYS the source of
+ * truth for the score, category, eligibility, and every monetary figure.
+ * This module never asks AI to compute those — it only asks AI to explain
+ * an already-final result in natural language. If AI is disabled, fails, or
+ * times out, the deterministic engine's own explanation
+ * (loanExplanation.ts) is used instead, so the employee never sees a blank
+ * or broken result.
+ *
+ * Flow:
+ *   1. computeCreditScore(input)              — always runs, cannot fail
+ *   2. serializeRiskExplanation(result)        — the guaranteed-valid snapshot
+ *   3. (if enabled) ask the edge function for a narrative built FROM the
+ *      already-computed numbers; on success, layer the narrative on top
+ *      (result_source: 'hybrid'); on any failure, keep the snapshot as-is
+ *      (result_source: 'formula').
  */
 
 import { supabase } from '@/integrations/supabase/client';
 import {
-  buildDerivedFeatures,
   computeCreditScore,
   serializeRiskExplanation,
-  type AiTopFactor,
   type CreditScoreInput,
-  type DerivedFeatures,
-  type RecommendedAction,
+  type CreditScoreResult,
+  type ResultSource,
   type SavedRiskExplanation,
 } from '@/lib/creditScoring';
 
-/** Compact financial payload sent to the AI (the structured banking fields). */
-export interface AiAssessmentPayload {
-  input: {
-    monthly_income: number;
-    monthly_expenses: number;
-    existing_loans: number;
-    requested_loan_amount: number;
-    employment_type: string;
-    loan_purpose: string;
-  };
-  derived: {
-    monthly_income: number;
-    monthly_expenses: number;
-    existing_loans: number;
-    requested_loan_amount: number;
-    estimated_new_loan_payment: number;
-    debt_service_ratio: number;
-    loan_to_income_ratio: number;
-    disposable_income: number;
-    employment_type: string;
-    loan_purpose: string;
-  };
-}
-
-/** Validated AI result, normalized for the app. */
-export interface AiCreditResult {
-  score: number;
-  category: 'low' | 'medium' | 'high';
-  confidence: number | null;
-  summary: string;
-  top_factors: AiTopFactor[];
-  derived_features: DerivedFeatures;
-  recommended_action: RecommendedAction;
-  assessed_at: string;
-  result_source: 'ai';
-}
-
 export interface AssessmentOutcome {
   snapshot: SavedRiskExplanation;
-  source: 'ai' | 'algorithm';
-  /** Set when source === 'algorithm' — why AI was not used. */
-  fallbackReason?: string;
+  source: ResultSource;
+  /** Set when the AI narrative layer did not run or did not succeed. */
+  aiUnavailableReason?: string;
   debug?: AssessmentDebugInfo;
 }
 
 export interface AssessmentDebugInfo {
+  formula_score: number;
+  formula_category: string;
   ai_attempted: boolean;
-  ai_configured: boolean | null;
+  ai_succeeded: boolean;
   ai_error_message?: string;
-  fallback_reason?: string;
-  result_source: 'ai' | 'algorithm';
+  result_source: ResultSource;
 }
 
 const EDGE_FUNCTION = 'credit-assessment';
+/** Give the AI narrative a bounded window; never let it hang the assessment. */
+const AI_TIMEOUT_MS = 12_000;
 
-/** Controlled by VITE_CREDIT_AI_FALLBACK (default: enabled). Set to "false" to surface AI errors. */
-function fallbackEnabled(): boolean {
+/**
+ * Controlled by VITE_CREDIT_AI_FALLBACK (kept as the existing env var name
+ * for continuity with prior configuration — its meaning has shifted from
+ * "attempt algorithmic fallback on AI failure" to "attempt the AI narrative
+ * layer at all", since the algorithm/formula is no longer a fallback, it's
+ * always the primary calculation). Set to "false" to skip AI entirely and
+ * always use the deterministic explanation.
+ */
+function aiExplanationEnabled(): boolean {
   return import.meta.env.VITE_CREDIT_AI_FALLBACK !== 'false';
 }
 
@@ -93,154 +73,20 @@ function formatAssessmentError(err: unknown): string {
   if (/402|credits|max_tokens/i.test(raw)) {
     return (
       'OpenRouter credit limit reached (HTTP 402). Add credits at openrouter.ai, ' +
-      'lower CREDIT_MAX_TOKENS on the edge function, or temporarily set VITE_CREDIT_AI_FALLBACK=true.'
+      'lower CREDIT_MAX_TOKENS on the edge function, or set VITE_CREDIT_AI_FALLBACK=false ' +
+      'to skip the AI narrative and use the deterministic explanation only.'
     );
   }
   if (/OPENROUTER_API_KEY/i.test(raw)) {
     return 'OPENROUTER_API_KEY is not configured on Supabase. Run: supabase secrets set OPENROUTER_API_KEY=...';
   }
-  if (/truncated|finish_reason/i.test(raw)) {
-    return 'AI response was truncated. Redeploy credit-assessment with a higher CREDIT_MAX_TOKENS or slimmer prompt.';
+  if (/timed out/i.test(raw)) {
+    return 'AI explanation request timed out.';
   }
-  return raw || 'AI assessment failed';
+  return raw || 'AI explanation failed';
 }
 
-function classifyAiError(err: unknown): string {
-  return formatAssessmentError(err);
-}
-
-/** Build the structured financial payload from raw form input. */
-export function buildAssessmentPayload(
-  input: CreditScoreInput,
-  derived: DerivedFeatures
-): AiAssessmentPayload {
-  return {
-    input: {
-      monthly_income: input.monthlyIncome,
-      monthly_expenses: input.monthlyExpenses,
-      existing_loans: input.existingLoans,
-      requested_loan_amount: input.requestedLoanAmount,
-      employment_type: input.employmentType || 'unknown',
-      loan_purpose: input.loanPurpose || 'unknown',
-    },
-    derived: {
-      monthly_income: derived.monthly_income,
-      monthly_expenses: derived.monthly_expenses,
-      existing_loans: derived.existing_loans,
-      requested_loan_amount: derived.requested_loan_amount,
-      estimated_new_loan_payment: derived.estimated_new_loan_payment,
-      debt_service_ratio: derived.debt_service_ratio,
-      loan_to_income_ratio: derived.loan_to_monthly_income_ratio,
-      disposable_income: derived.disposable_income,
-      employment_type: derived.employment_type,
-      loan_purpose: derived.loan_purpose,
-    },
-  };
-}
-
-function asNumber(value: unknown): number | null {
-  const n = typeof value === 'string' ? Number(value) : (value as number);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeCategory(value: unknown, score: number): 'low' | 'medium' | 'high' {
-  const v = String(value ?? '').toLowerCase();
-  if (v === 'low' || v === 'medium' || v === 'high') return v;
-  if (score >= 70) return 'high';
-  if (score >= 40) return 'medium';
-  return 'low';
-}
-
-function normalizeAction(value: unknown): RecommendedAction {
-  const v = String(value ?? '').toLowerCase().replace(/\s+/g, '_');
-  if (v === 'approve' || v === 'manual_review' || v === 'reject') return v;
-  return 'manual_review';
-}
-
-function normalizeTopFactors(value: unknown): AiTopFactor[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((f) => f && typeof f === 'object')
-    .map((f) => {
-      const o = f as Record<string, unknown>;
-      return {
-        label: String(o.label ?? o.feature ?? 'Factor'),
-        impact: String(o.impact ?? 'medium'),
-        direction: String(o.direction ?? 'increases risk'),
-        value: String(o.value ?? ''),
-      };
-    })
-    .slice(0, 6);
-}
-
-/**
- * Strictly parse + validate the raw AI response into an AiCreditResult.
- * Throws if the response cannot be safely interpreted.
- */
-export function parseAiCreditResult(
-  raw: unknown,
-  fallbackDerived: DerivedFeatures
-): AiCreditResult {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error('AI response is not an object');
-  }
-  const o = raw as Record<string, unknown>;
-
-  const score = asNumber(o.score);
-  if (score === null) {
-    throw new Error('AI response missing a numeric score');
-  }
-  const clampedScore = Math.min(100, Math.max(0, Math.round(score)));
-
-  const category = normalizeCategory(o.category, clampedScore);
-  const confidence = asNumber(o.confidence);
-  const summary = String(o.summary ?? '').trim();
-  if (!summary) {
-    throw new Error('AI response missing a summary');
-  }
-
-  const top_factors = normalizeTopFactors(o.top_factors);
-  if (top_factors.length === 0) {
-    throw new Error('AI response missing top factors');
-  }
-
-  const derived_features = fallbackDerived;
-
-  return {
-    score: clampedScore,
-    category,
-    confidence: confidence === null ? null : Math.min(1, Math.max(0, confidence)),
-    summary,
-    top_factors,
-    derived_features,
-    recommended_action: normalizeAction(o.recommended_action),
-    assessed_at:
-      typeof o.assessed_at === 'string' && o.assessed_at
-        ? o.assessed_at
-        : new Date().toISOString(),
-    result_source: 'ai',
-  };
-}
-
-/** Convert a validated AI result into the DB persistence snapshot. */
-export function serializeAiAssessment(result: AiCreditResult): SavedRiskExplanation {
-  return {
-    risk_score: result.score,
-    risk_category: result.category,
-    risk_confidence: result.confidence,
-    risk_explanation_summary: result.summary,
-    risk_top_factors: result.top_factors,
-    risk_derived_features: result.derived_features,
-    recommended_action: result.recommended_action,
-    result_source: 'ai',
-    assessed_at: result.assessed_at,
-  };
-}
-
-async function extractFunctionError(error: {
-  message: string;
-  context?: Response;
-}): Promise<string> {
+async function extractFunctionError(error: { message: string; context?: Response }): Promise<string> {
   let detail = error.message;
   try {
     const ctx = error.context;
@@ -261,100 +107,141 @@ async function extractFunctionError(error: {
   return detail;
 }
 
-/**
- * Run the AI credit assessment. Returns the persistence-ready snapshot and
- * which engine produced it. On AI failure, falls back to the legacy math
- * engine only if VITE_CREDIT_AI_FALLBACK is not "false"; otherwise rethrows.
- */
-export async function assessCreditRisk(
-  input: CreditScoreInput
-): Promise<AssessmentOutcome> {
-  const derived = buildDerivedFeatures(input);
-  const payload = buildAssessmentPayload(input, derived);
-  const canFallback = fallbackEnabled();
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+}
 
-  const debugBase: AssessmentDebugInfo = {
-    ai_attempted: true,
-    ai_configured: null,
-    result_source: 'ai',
-  };
-
-  console.info('[ai-credit] starting assessment', {
-    edgeFunction: EDGE_FUNCTION,
-    fallbackEnabled: canFallback,
-    envFallbackFlag: import.meta.env.VITE_CREDIT_AI_FALLBACK ?? '(unset)',
-  });
-
-  try {
-    const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
-      body: payload,
-    });
-
-    if (error) {
-      const detail = await extractFunctionError(
-        error as { message: string; context?: Response }
-      );
-      debugBase.ai_error_message = detail;
-      console.error('[ai-credit] edge function error:', detail);
-      throw new Error(detail);
-    }
-    if (data?.error) {
-      const detail = String(data.error);
-      debugBase.ai_error_message = detail;
-      console.error('[ai-credit] edge function error payload:', detail);
-      throw new Error(detail);
-    }
-
-    console.info('[ai-credit] raw edge result keys:', data?.result ? Object.keys(data.result) : null);
-    const result = parseAiCreditResult(data?.result, derived);
-
-    const debug: AssessmentDebugInfo = {
-      ...debugBase,
-      ai_configured: true,
-      result_source: 'ai',
-    };
-    console.info('[ai-credit] AI assessment succeeded', {
+/** Compact context sent to the AI — the already-final numbers, never invented by it. */
+function buildNarrativePayload(input: CreditScoreInput, result: CreditScoreResult) {
+  const f = result.features;
+  return {
+    input: {
+      employment_type: f.employment_type,
+      loan_purpose: f.loan_purpose,
+    },
+    formula_result: {
       score: result.score,
       category: result.category,
-      confidence: result.confidence,
-      recommended_action: result.recommended_action,
-      result_source: result.result_source,
-      factors: result.top_factors.length,
-      debug,
+      eligibility_status: f.eligibility_status,
+      eligibility_reasons: f.eligibility_reasons,
+      debt_burden_ratio: f.debt_burden_ratio,
+      debt_burden_ratio_cap: 0.5,
+      age_at_maturity: f.age_at_maturity,
+      age_at_maturity_cap: 70,
+      loan_type: f.loan_type,
+      loan_currency: f.loan_currency,
+      loan_term_years: f.loan_term_years,
+      annual_interest_rate_used: f.annual_interest_rate_used,
+      monthly_installment: f.monthly_installment,
+      total_interest: f.total_interest,
+      total_repaid: f.total_repaid,
+      requested_loan_amount: f.requested_loan_amount,
+      monthly_income: f.monthly_income,
+      monthly_obligations: f.monthly_obligations,
+      top_contributions: result.contributions.slice(0, 5),
+    },
+  };
+}
+
+interface AiNarrativeResponse {
+  explanation?: string;
+  error?: string;
+}
+
+/**
+ * Requests a natural-language explanation of the ALREADY-COMPUTED formula
+ * result. Throws on any failure — callers must treat that as "no AI
+ * narrative available" and keep the deterministic explanation, never as
+ * "no result available".
+ */
+async function requestAiNarrative(
+  input: CreditScoreInput,
+  result: CreditScoreResult
+): Promise<string> {
+  const payload = buildNarrativePayload(input, result);
+
+  const invokePromise = supabase.functions.invoke(EDGE_FUNCTION, { body: payload });
+  const { data, error } = await withTimeout(
+    invokePromise,
+    AI_TIMEOUT_MS,
+    'AI explanation request timed out'
+  );
+
+  if (error) {
+    const detail = await extractFunctionError(error as { message: string; context?: Response });
+    throw new Error(detail);
+  }
+
+  const body = data as AiNarrativeResponse | null;
+  if (body?.error) {
+    throw new Error(String(body.error));
+  }
+
+  const explanation = body?.explanation?.trim();
+  if (!explanation) {
+    throw new Error('AI response missing an explanation');
+  }
+
+  return explanation;
+}
+
+/**
+ * Runs the credit assessment. The deterministic engine always produces the
+ * final score/category/eligibility/numbers; this function only decides
+ * whether an AI-authored narrative gets layered on top of them.
+ */
+export async function assessCreditRisk(input: CreditScoreInput): Promise<AssessmentOutcome> {
+  // 1. Deterministic engine — the source of truth. Cannot fail: pure, synchronous.
+  const formulaResult = computeCreditScore(input);
+  const baseSnapshot = serializeRiskExplanation(formulaResult);
+
+  const debug: AssessmentDebugInfo = {
+    formula_score: formulaResult.score,
+    formula_category: formulaResult.category,
+    ai_attempted: false,
+    ai_succeeded: false,
+    result_source: 'formula',
+  };
+
+  if (!aiExplanationEnabled()) {
+    console.info(
+      '[credit-assessment] AI explanation disabled (VITE_CREDIT_AI_FALLBACK=false) — using the deterministic result and explanation.'
+    );
+    return { snapshot: baseSnapshot, source: 'formula', debug };
+  }
+
+  debug.ai_attempted = true;
+
+  try {
+    const explanation = await requestAiNarrative(input, formulaResult);
+    debug.ai_succeeded = true;
+    debug.result_source = 'hybrid';
+
+    console.info('[credit-assessment] AI narrative succeeded — result_source: hybrid', {
+      score: formulaResult.score,
+      category: formulaResult.category,
     });
 
-    return { snapshot: serializeAiAssessment(result), source: 'ai', debug };
-  } catch (err) {
-    const aiErrorMessage = classifyAiError(err);
-    debugBase.ai_error_message = aiErrorMessage;
-    debugBase.result_source = 'algorithm';
-
-    console.error('[ai-credit] AI assessment failed', {
-      ai_attempted: true,
-      ai_error_message: aiErrorMessage,
-      fallbackEnabled: canFallback,
-    });
-
-    if (!canFallback) {
-      throw new Error(aiErrorMessage);
-    }
-
-    const fallbackReason = aiErrorMessage;
-    console.warn('[ai-credit] falling back to legacy math engine', {
-      fallback_reason: fallbackReason,
-      result_source: 'algorithm',
-    });
-
-    const mathResult = computeCreditScore(input);
-    return {
-      snapshot: serializeRiskExplanation(mathResult),
-      source: 'algorithm',
-      fallbackReason,
-      debug: {
-        ...debugBase,
-        fallback_reason: fallbackReason,
-        result_source: 'algorithm',
-      },
+    const hybridSnapshot: SavedRiskExplanation = {
+      ...baseSnapshot,
+      risk_explanation_summary: explanation,
+      ai_explanation: explanation,
+      result_source: 'hybrid',
     };
+
+    return { snapshot: hybridSnapshot, source: 'hybrid', debug };
+  } catch (err) {
+    const message = formatAssessmentError(err);
+    debug.ai_error_message = message;
+    console.warn(
+      '[credit-assessment] AI narrative unavailable — falling back to the deterministic explanation:',
+      message
+    );
+    return { snapshot: baseSnapshot, source: 'formula', aiUnavailableReason: message, debug };
   }
 }

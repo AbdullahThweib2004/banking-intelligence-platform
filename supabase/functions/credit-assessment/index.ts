@@ -1,19 +1,27 @@
 // Supabase Edge Function: credit-assessment
 // ---------------------------------------------------------------------------
-// AI-powered credit risk assessment. The AI is the SOURCE OF TRUTH for the
-// score, category, recommended action and explanation.
+// AI EXPLANATION layer for credit risk assessment.
+//
+// IMPORTANT — this function does NOT compute the risk score, category,
+// eligibility, or any monetary figure. Those are always computed
+// deterministically on the client (src/lib/creditScoring.ts, backed by
+// loanCalculator.ts / loanEligibility.ts / loanRiskScoring.ts) BEFORE this
+// function is ever called. This function receives that already-final result
+// and returns ONLY a natural-language explanation of it — it must not
+// invent or override any number.
+//
+// Request:  { input: {...context}, formula_result: {...already-computed} }
+// Response: { explanation: string }
 //
 // Deploy:   supabase functions deploy credit-assessment
 // Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
 //           (optional) supabase secrets set CREDIT_MODEL=openai/gpt-4o-mini
-//           (optional) supabase secrets set CREDIT_MAX_TOKENS=400
+//           (optional) supabase secrets set CREDIT_MAX_TOKENS=350
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
-// Keep low enough for OpenRouter credit budgets (HTTP 402 when too high).
-// Slim JSON output (no derived_features echo) fits comfortably in ~400 tokens.
-const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "400");
+const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "350");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,38 +43,33 @@ function maskSecret(value: string | undefined): string {
   return `${value.slice(0, 6)}…${value.slice(-4)}`;
 }
 
-const SYSTEM_PROMPT = `You are a senior bank credit risk officer for a retail bank.
-Assess loan applications strictly from the structured financial fields provided.
-Respond with ONLY a single valid JSON object — no markdown, no code fences.
+const SYSTEM_PROMPT = `You are a senior bank credit risk officer writing a short explanation for a colleague.
 
-Scoring rules:
-- "score": integer 0 (lowest risk) to 100 (highest risk).
-- "category": "low" if score < 40, "medium" if 40-69, "high" if score >= 70.
-- Higher debt service ratio, higher loan-to-income ratio, negative disposable income,
-  and unstable employment increase risk.
-- "recommended_action": "approve" | "manual_review" | "reject".
-- "confidence": number 0-1.
-- "top_factors": exactly 3 items, each { "label", "impact" ("high"|"medium"|"low"),
-  "direction" ("increases risk"|"decreases risk"), "value" (short string) }.
-- "summary": one professional sentence, no markdown.
-- "result_source": "ai".
-- "assessed_at": use the provided assessment timestamp.
+You will be given a loan application's FINAL, already-decided figures: risk
+score, risk category, eligibility status, debt burden ratio, age at loan
+maturity, monthly installment, total interest, total repaid, interest rate,
+and the top contributing factors. These numbers are FINAL and were computed
+by the bank's deterministic calculation engine — you must NOT recompute,
+question, contradict, or invent a different score/category/number. Your only
+job is to explain them clearly in plain language.
 
-Do NOT include derived_features in your response — the server adds them.
+Write a short, professional explanation (3-6 sentences, plain text, no
+markdown, no code fences, no JSON) that:
+- states the monthly installment, interest rate, and loan type in context
+- explains the debt burden ratio relative to the 50% cap, and whether that
+  drove the result
+- explains the age-at-maturity check relative to the 70 cap, if relevant
+- names the 1-3 largest contributing factors from top_contributions and
+  whether each raises or lowers risk
+- if eligibility_status is "not_eligible", clearly states the application is
+  NOT eligible and why, and that rejection is recommended regardless of the
+  numeric score
+- ends with a short recommendation/caution note appropriate to the category
 
-Return JSON shaped exactly:
-{
-  "score": number,
-  "category": "low" | "medium" | "high",
-  "confidence": number,
-  "summary": string,
-  "top_factors": [ { "label": string, "impact": string, "direction": string, "value": string } ],
-  "recommended_action": "approve" | "manual_review" | "reject",
-  "assessed_at": string,
-  "result_source": "ai"
-}`;
+Respond with ONLY a single valid JSON object, no markdown, no code fences:
+{ "explanation": string }`;
 
-async function callModel(payload: unknown, assessedAt: string): Promise<string> {
+async function callModel(payload: unknown): Promise<string> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   const aiConfigured = Boolean(apiKey);
   console.log("[credit-assessment] ai_configured:", aiConfigured, {
@@ -77,13 +80,11 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
 
   const userMessage = JSON.stringify({
-    instruction:
-      "Assess this loan application and return the strict JSON result object.",
-    assessment_timestamp: assessedAt,
-    application: payload,
+    instruction: "Explain this already-decided loan assessment result.",
+    ...(payload as Record<string, unknown>),
   });
 
-  console.log("[credit-assessment] ai_attempted: true — calling OpenRouter");
+  console.log("[credit-assessment] calling OpenRouter for narrative explanation");
   const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -94,9 +95,8 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
     },
     body: JSON.stringify({
       model: CREDIT_MODEL,
-      temperature: 0,
+      temperature: 0.2,
       top_p: 1,
-      seed: 7,
       max_tokens: MAX_TOKENS,
       response_format: { type: "json_object" },
       messages: [
@@ -117,10 +117,6 @@ async function callModel(payload: unknown, assessedAt: string): Promise<string> 
   const content = data?.choices?.[0]?.message?.content;
   const finishReason = data?.choices?.[0]?.finish_reason;
   console.log("[credit-assessment] finish_reason:", finishReason);
-  console.log(
-    "[credit-assessment] raw AI content:",
-    typeof content === "string" ? content.slice(0, 2000) : String(content),
-  );
   if (finishReason === "length") {
     throw new Error(
       `AI response truncated (max_tokens=${MAX_TOKENS}). Increase CREDIT_MAX_TOKENS or add OpenRouter credits.`,
@@ -156,38 +152,30 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const input = body?.input;
-    const derived = body?.derived;
+    const formulaResult = body?.formula_result;
 
-    console.log("[credit-assessment] payload keys:", {
-      inputKeys: input && typeof input === "object" ? Object.keys(input) : null,
-      derivedKeys: derived && typeof derived === "object" ? Object.keys(derived) : null,
-    });
-
-    if (!input || typeof input !== "object") {
-      return json(400, { error: "Missing 'input' financial payload" });
+    if (!formulaResult || typeof formulaResult !== "object") {
+      return json(400, { error: "Missing 'formula_result' — the deterministic result must be computed first" });
+    }
+    if (typeof formulaResult.score !== "number" || typeof formulaResult.category !== "string") {
+      return json(400, { error: "'formula_result' is missing score/category" });
     }
 
-    const assessedAt = new Date().toISOString();
-    const content = await callModel({ input, derived }, assessedAt);
+    console.log("[credit-assessment] explaining final result:", {
+      score: formulaResult.score,
+      category: formulaResult.category,
+      eligibility_status: formulaResult.eligibility_status,
+    });
+
+    const content = await callModel({ input: body?.input, formula_result: formulaResult });
     const parsed = extractJson(content) as Record<string, unknown>;
-    console.log("[credit-assessment] parsed result:", {
-      score: parsed?.score,
-      category: parsed?.category,
-      recommended_action: parsed?.recommended_action,
-      factors: Array.isArray(parsed?.top_factors) ? parsed.top_factors.length : 0,
-      result_source: "ai",
-    });
 
-    parsed.result_source = "ai";
-    parsed.assessed_at =
-      typeof parsed.assessed_at === "string" ? parsed.assessed_at : assessedAt;
-    // Server-controlled: use deterministic derived features from the client payload.
-    if (derived && typeof derived === "object") {
-      parsed.derived_features = derived;
+    const explanation = typeof parsed.explanation === "string" ? parsed.explanation.trim() : "";
+    if (!explanation) {
+      return json(502, { error: "AI response missing an explanation" });
     }
 
-    return json(200, { result: parsed });
+    return json(200, { explanation });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[credit-assessment] failed:", message);

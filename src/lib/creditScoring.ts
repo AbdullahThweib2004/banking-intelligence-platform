@@ -1,9 +1,61 @@
 /**
- * Deterministic credit risk scoring with transparent feature attribution.
+ * Credit risk assessment — orchestration layer.
  *
- * Uses the employee-entered requested loan amount (not the DB profile default).
- * Feature impacts are additive (SHAP-equivalent for this linear model).
+ * This module is the stable, backward-compatible API the rest of the app
+ * calls (`computeCreditScore`, `buildDerivedFeatures`, `serializeRiskExplanation`,
+ * the `CreditScoreInput` / `DerivedFeatures` / `SavedRiskExplanation` shapes).
+ * Internally it now delegates the actual banking math to dedicated modules:
+ *
+ *   - loanProducts.ts     product catalogue + rate resolution (fixed/index)
+ *   - loanCalculator.ts   EMI/annuity monthly installment formula
+ *   - loanEligibility.ts  debt-burden-ratio (50% cap) + age-at-maturity (70) rules
+ *   - loanRiskScoring.ts  deterministic, weighted 0-100 risk score
+ *   - loanExplanation.ts  deterministic bilingual fallback narrative
+ *
+ * This is the DETERMINISTIC engine and is always the source of truth for the
+ * score/category/eligibility/installment numbers. AI (see aiCreditAssessment.ts)
+ * only ever adds a narrative explanation on top — it never computes or
+ * overrides any number here.
+ *
+ * Backward compatibility: every field on `CreditScoreInput` beyond the
+ * original six (monthlyIncome, monthlyExpenses, existingLoans,
+ * requestedLoanAmount, employmentType, loanPurpose) is OPTIONAL, with a
+ * documented default applied in `resolveInput()`. Existing callers (and old
+ * saved assessments re-run through modification re-analysis) keep working
+ * unchanged; new callers can supply the full bank-calculator-style input for
+ * an accurate result.
  */
+
+// NOTE: relative (not "@/lib/...") imports are deliberate here — this file
+// (and the loan* modules it composes) must resolve correctly under Node's
+// plain `--test` runner (used by `npm test`), which has no bundler-style
+// path-alias resolution, in addition to Vite.
+import {
+  resolveEffectiveAnnualRate,
+  convertCurrency,
+  type LoanCurrency,
+  type LoanProductId,
+} from './loanProducts.ts';
+import { calculateLoanPayment } from './loanCalculator.ts';
+import {
+  DBR_CAP,
+  AGE_AT_MATURITY_CAP,
+  evaluateEligibility,
+  type EligibilityStatus,
+} from './loanEligibility.ts';
+import {
+  computeFormulaRiskScore,
+  applyEligibilityOverride,
+  type FeatureContribution,
+  type RiskCategory,
+} from './loanRiskScoring.ts';
+import { buildDeterministicExplanation } from './loanExplanation.ts';
+
+export type { LoanProductId, LoanCurrency } from './loanProducts.ts';
+export type { EligibilityStatus } from './loanEligibility.ts';
+export type { FeatureContribution } from './loanRiskScoring.ts';
+export { LOAN_PRODUCTS, resolveEffectiveAnnualRate } from './loanProducts.ts';
+export { DBR_CAP, AGE_AT_MATURITY_CAP } from './loanEligibility.ts';
 
 export interface CreditScoreInput {
   monthlyIncome: number;
@@ -13,35 +65,60 @@ export interface CreditScoreInput {
   requestedLoanAmount: number;
   employmentType: string;
   loanPurpose?: string;
+
+  // --- Bank-calculator-style fields (optional; defaulted in resolveInput()) ---
+  /** Loan product family — drives which rate model applies. Default: 'personal'. */
+  loanType?: LoanProductId;
+  /** Currency the loan is disbursed in. Default: 'ILS'. */
+  loanCurrency?: LoanCurrency;
+  /** Currency the client's salary is paid in. Default: 'ILS'. */
+  salaryCurrency?: LoanCurrency;
+  /** Existing monthly loan/credit obligations (for DBR). Default: existingLoans / 12. */
+  monthlyObligations?: number;
+  /** Client age. Default: null (age-at-maturity rule is then skipped, not assumed to pass). */
+  clientAge?: number | null;
+  /** Loan term in years. Default: 5 (keeps the legacy 60-month assumption). */
+  loanTermYears?: number;
 }
 
 export interface DerivedFeatures {
+  // --- legacy fields, kept for backward compatibility with old saved assessments ---
   monthly_income: number;
   monthly_expenses: number;
   existing_loans: number;
   requested_loan_amount: number;
   existing_loan_monthly_payment: number;
+  /** Same value as monthly_installment — kept under the old name for old readers. */
   estimated_new_loan_payment: number;
   total_monthly_debt_service: number;
+  /** Same value as debt_burden_ratio — kept under the old name for old readers. */
   debt_service_ratio: number;
   loan_to_annual_income_ratio: number;
   loan_to_monthly_income_ratio: number;
   disposable_income: number;
   employment_type: string;
   loan_purpose: string;
+
+  // --- bank-calculator-style fields ---
+  loan_type: LoanProductId;
+  loan_currency: LoanCurrency;
+  salary_currency: LoanCurrency;
+  monthly_obligations: number;
+  client_age: number | null;
+  loan_term_years: number;
+  annual_interest_rate_used: number;
+  rate_label: string;
+  rate_details: string;
+  monthly_installment: number;
+  total_interest: number;
+  total_repaid: number;
+  debt_burden_ratio: number;
+  age_at_maturity: number | null;
+  eligibility_status: EligibilityStatus;
+  eligibility_reasons: string[];
 }
 
-export interface FeatureContribution {
-  key: string;
-  labelEn: string;
-  labelAr: string;
-  /** Raw feature value shown to the user. */
-  displayValue: string;
-  /** Points added to the risk score (positive = higher risk). */
-  impact: number;
-}
-
-/** Qualitative factor shape returned by the AI assessment service. */
+/** Qualitative factor shape returned by the AI explanation service. */
 export interface AiTopFactor {
   label: string;
   /** Qualitative magnitude: "high" | "medium" | "low". */
@@ -52,15 +129,21 @@ export interface AiTopFactor {
   value: string;
 }
 
-/** A saved top factor may originate from the AI service or the legacy math engine. */
+/** A saved top factor may originate from the AI narrative layer or the formula engine. */
 export type SavedTopFactor = AiTopFactor | FeatureContribution;
 
 export type RecommendedAction = 'approve' | 'manual_review' | 'reject';
-export type ResultSource = 'ai' | 'algorithm';
+/**
+ * 'ai' | 'algorithm' are the legacy values (from before this refactor, when
+ * the AI edge function computed the whole result, or the old math fallback
+ * ran alone). New assessments use 'formula' (deterministic engine only, no
+ * AI narrative) or 'hybrid' (deterministic engine + AI narrative on top).
+ */
+export type ResultSource = 'ai' | 'algorithm' | 'formula' | 'hybrid';
 
 export interface CreditScoreResult {
   score: number;
-  category: 'low' | 'medium' | 'high';
+  category: RiskCategory;
   features: DerivedFeatures;
   contributions: FeatureContribution[];
   /** Full payload logged at inference time. */
@@ -69,14 +152,14 @@ export interface CreditScoreResult {
     derived: DerivedFeatures;
     contributions: FeatureContribution[];
     score: number;
-    category: 'low' | 'medium' | 'high';
+    category: RiskCategory;
   };
 }
 
 /** Snapshot persisted on approval_requests and shown in the view modal. */
 export interface SavedRiskExplanation {
   risk_score: number;
-  risk_category: 'low' | 'medium' | 'high';
+  risk_category: RiskCategory;
   risk_confidence?: number | null;
   risk_explanation_summary: string;
   risk_top_factors: SavedTopFactor[];
@@ -84,48 +167,23 @@ export interface SavedRiskExplanation {
   recommended_action?: RecommendedAction | null;
   result_source?: ResultSource | null;
   assessed_at: string;
-}
 
-export function buildExplanationSummary(
-  result: CreditScoreResult,
-  language: 'en' | 'ar' = 'en'
-): string {
-  const top = result.contributions.filter((c) => Math.abs(c.impact) >= 0.5).slice(0, 3);
-  const dsr = (result.features.debt_service_ratio * 100).toFixed(1);
-  const loan = result.features.requested_loan_amount.toLocaleString();
-
-  if (language === 'ar') {
-    const factors = top
-      .map((f) => `${f.labelAr} (${f.impact > 0 ? '+' : ''}${f.impact.toFixed(1)})`)
-      .join('؛ ');
-    return `تم احتساب درجة ${result.score} (${result.category}) بناءً على نسبة خدمة الدين ${dsr}% وقرض مطلوب ₪${loan}. أهم العوامل: ${factors || '—'}.`;
-  }
-
-  const factors = top
-    .map((f) => `${f.labelEn} (${f.impact > 0 ? '+' : ''}${f.impact.toFixed(1)} pts)`)
-    .join('; ');
-  return `Score ${result.score} (${result.category} risk) driven by a ${dsr}% debt service ratio and requested loan of ₪${loan}. Top factors: ${factors || '—'}.`;
-}
-
-export function serializeRiskExplanation(result: CreditScoreResult): SavedRiskExplanation {
-  const topFactors = result.contributions
-    .filter((c) => Math.abs(c.impact) >= 0.5)
-    .slice(0, 6);
-
-  const recommended_action: RecommendedAction =
-    result.category === 'low' ? 'approve' : result.category === 'medium' ? 'manual_review' : 'reject';
-
-  return {
-    risk_score: result.score,
-    risk_category: result.category,
-    risk_confidence: null,
-    risk_explanation_summary: buildExplanationSummary(result, 'en'),
-    risk_top_factors: topFactors,
-    risk_derived_features: result.features,
-    recommended_action,
-    result_source: 'algorithm',
-    assessed_at: new Date().toISOString(),
-  };
+  // --- bank-calculator-style fields (optional: absent on assessments saved before this refactor) ---
+  loan_type?: LoanProductId | null;
+  loan_currency?: LoanCurrency | null;
+  salary_currency?: LoanCurrency | null;
+  monthly_obligations?: number | null;
+  client_age?: number | null;
+  loan_term_years?: number | null;
+  annual_interest_rate_used?: number | null;
+  monthly_installment?: number | null;
+  total_interest?: number | null;
+  total_repaid?: number | null;
+  debt_burden_ratio?: number | null;
+  age_at_maturity?: number | null;
+  eligibility_status?: EligibilityStatus | null;
+  /** Raw AI narrative text, if AI succeeded. Null whenever result_source is 'formula'. */
+  ai_explanation?: string | null;
 }
 
 export function hasSavedRiskExplanation(row: {
@@ -140,59 +198,13 @@ export function hasSavedRiskExplanation(row: {
   );
 }
 
+const DEFAULT_LOAN_TERM_YEARS = 5; // keeps the legacy hardcoded 60-month assumption
+const DEFAULT_CURRENCY: LoanCurrency = 'ILS';
+const DEFAULT_LOAN_TYPE: LoanProductId = 'personal';
+
+// Kept for estimateMonthlyLoanPayment()'s backward-compatible defaults.
 const LOAN_TERM_MONTHS = 60;
 const ANNUAL_INTEREST_RATE = 0.09;
-
-const EMPLOYMENT_RISK: Record<string, number> = {
-  employed: 0,
-  'self-employed': 6,
-  business: 4,
-};
-
-/** Standard amortizing monthly payment estimate. */
-export function estimateMonthlyLoanPayment(
-  principal: number,
-  months = LOAN_TERM_MONTHS,
-  annualRate = ANNUAL_INTEREST_RATE
-): number {
-  if (principal <= 0) return 0;
-  const r = annualRate / 12;
-  if (r <= 0) return principal / months;
-  const factor = Math.pow(1 + r, months);
-  return (principal * r * factor) / (factor - 1);
-}
-
-export function buildDerivedFeatures(input: CreditScoreInput): DerivedFeatures {
-  const income = Math.max(0, input.monthlyIncome);
-  const expenses = Math.max(0, input.monthlyExpenses);
-  const existing = Math.max(0, input.existingLoans);
-  const requested = Math.max(0, input.requestedLoanAmount);
-
-  const existingMonthly = existing / 12;
-  const newPayment = estimateMonthlyLoanPayment(requested);
-  const totalDebtService = expenses + existingMonthly + newPayment;
-  const debtServiceRatio = income > 0 ? totalDebtService / income : 1;
-  const annualIncome = income * 12;
-  const loanToAnnualIncome = annualIncome > 0 ? requested / annualIncome : requested > 0 ? 99 : 0;
-  const loanToMonthlyIncome = income > 0 ? requested / income : requested > 0 ? 99 : 0;
-  const disposable = income - totalDebtService;
-
-  return {
-    monthly_income: income,
-    monthly_expenses: expenses,
-    existing_loans: existing,
-    requested_loan_amount: requested,
-    existing_loan_monthly_payment: round2(existingMonthly),
-    estimated_new_loan_payment: round2(newPayment),
-    total_monthly_debt_service: round2(totalDebtService),
-    debt_service_ratio: round4(debtServiceRatio),
-    loan_to_annual_income_ratio: round4(loanToAnnualIncome),
-    loan_to_monthly_income_ratio: round4(loanToMonthlyIncome),
-    disposable_income: round2(disposable),
-    employment_type: input.employmentType || 'unknown',
-    loan_purpose: input.loanPurpose || 'unknown',
-  };
-}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -202,132 +214,183 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
-function clampScore(score: number): number {
-  return Math.min(100, Math.max(0, Math.round(score)));
+interface ResolvedCreditScoreInput {
+  monthlyIncome: number;
+  monthlyExpenses: number;
+  existingLoans: number;
+  requestedLoanAmount: number;
+  employmentType: string;
+  loanPurpose: string;
+  loanType: LoanProductId;
+  loanCurrency: LoanCurrency;
+  salaryCurrency: LoanCurrency;
+  monthlyObligations: number;
+  clientAge: number | null;
+  loanTermYears: number;
 }
 
-function categoryFromScore(score: number): 'low' | 'medium' | 'high' {
-  if (score < 40) return 'low';
-  if (score < 70) return 'medium';
-  return 'high';
-}
-
-function fmtMoney(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-}
-
-function fmtPct(n: number): string {
-  return `${(n * 100).toFixed(1)}%`;
+function resolveInput(input: CreditScoreInput): ResolvedCreditScoreInput {
+  const existingLoans = Math.max(0, input.existingLoans);
+  return {
+    monthlyIncome: Math.max(0, input.monthlyIncome),
+    monthlyExpenses: Math.max(0, input.monthlyExpenses),
+    existingLoans,
+    requestedLoanAmount: Math.max(0, input.requestedLoanAmount),
+    employmentType: input.employmentType || 'unknown',
+    loanPurpose: input.loanPurpose || 'unknown',
+    loanType: input.loanType ?? DEFAULT_LOAN_TYPE,
+    loanCurrency: input.loanCurrency ?? DEFAULT_CURRENCY,
+    salaryCurrency: input.salaryCurrency ?? DEFAULT_CURRENCY,
+    // Legacy callers only ever supplied a lump existingLoans balance, never a
+    // monthly obligation figure — approximate it the same way the old
+    // "existing_loan_monthly_payment" derivation did (balance / 12), so
+    // pre-refactor callers keep producing a sane DBR instead of one that
+    // silently ignores existing debt.
+    monthlyObligations: input.monthlyObligations ?? existingLoans / 12,
+    clientAge: input.clientAge ?? null,
+    loanTermYears: input.loanTermYears ?? DEFAULT_LOAN_TERM_YEARS,
+  };
 }
 
 /**
- * Compute risk score and per-feature impacts (additive attribution).
+ * Standard amortizing monthly payment estimate. Kept for backward
+ * compatibility (existing callers/tests use months + a flat annual rate);
+ * internally now a thin wrapper over calculateLoanPayment().
+ */
+export function estimateMonthlyLoanPayment(
+  principal: number,
+  months = LOAN_TERM_MONTHS,
+  annualRate = ANNUAL_INTEREST_RATE
+): number {
+  return calculateLoanPayment({ principal, annualRate, termYears: months / 12 }).monthlyInstallment;
+}
+
+export function buildDerivedFeatures(input: CreditScoreInput): DerivedFeatures {
+  const resolved = resolveInput(input);
+
+  const rate = resolveEffectiveAnnualRate(resolved.loanType, resolved.loanCurrency);
+  const payment = calculateLoanPayment({
+    principal: resolved.requestedLoanAmount,
+    annualRate: rate.annualRate,
+    termYears: resolved.loanTermYears,
+  });
+
+  const installmentInSalaryCurrency = convertCurrency(
+    payment.monthlyInstallment,
+    resolved.loanCurrency,
+    resolved.salaryCurrency
+  );
+  const requestedLoanAmountInSalaryCurrency = convertCurrency(
+    resolved.requestedLoanAmount,
+    resolved.loanCurrency,
+    resolved.salaryCurrency
+  );
+
+  const eligibility = evaluateEligibility({
+    monthlyObligations: resolved.monthlyObligations,
+    monthlyInstallment: installmentInSalaryCurrency,
+    monthlySalary: resolved.monthlyIncome,
+    clientAge: resolved.clientAge,
+    loanTermYears: resolved.loanTermYears,
+  });
+
+  // Legacy-named fields — kept for old readers, always consistent with
+  // (derived from) the new bank-calculator-style fields below.
+  const existingMonthlyPayment = round2(resolved.existingLoans / 12);
+  const totalMonthlyDebtService = round2(
+    resolved.monthlyExpenses + resolved.monthlyObligations + payment.monthlyInstallment
+  );
+  const disposableIncome = round2(resolved.monthlyIncome - totalMonthlyDebtService);
+  const annualSalary = Math.max(1, resolved.monthlyIncome * 12);
+
+  return {
+    monthly_income: resolved.monthlyIncome,
+    monthly_expenses: resolved.monthlyExpenses,
+    existing_loans: resolved.existingLoans,
+    requested_loan_amount: resolved.requestedLoanAmount,
+    existing_loan_monthly_payment: existingMonthlyPayment,
+    estimated_new_loan_payment: payment.monthlyInstallment,
+    total_monthly_debt_service: totalMonthlyDebtService,
+    debt_service_ratio: round4(eligibility.debtBurdenRatio),
+    loan_to_annual_income_ratio: round4(requestedLoanAmountInSalaryCurrency / annualSalary),
+    loan_to_monthly_income_ratio: round4(
+      requestedLoanAmountInSalaryCurrency / Math.max(1, resolved.monthlyIncome)
+    ),
+    disposable_income: disposableIncome,
+    employment_type: resolved.employmentType,
+    loan_purpose: resolved.loanPurpose,
+
+    loan_type: resolved.loanType,
+    loan_currency: resolved.loanCurrency,
+    salary_currency: resolved.salaryCurrency,
+    monthly_obligations: round2(resolved.monthlyObligations),
+    client_age: resolved.clientAge,
+    loan_term_years: resolved.loanTermYears,
+    annual_interest_rate_used: rate.annualRate,
+    rate_label: rate.label,
+    rate_details: rate.details,
+    monthly_installment: payment.monthlyInstallment,
+    total_interest: payment.totalInterest,
+    total_repaid: payment.totalRepaid,
+    debt_burden_ratio: round4(eligibility.debtBurdenRatio),
+    age_at_maturity: eligibility.ageAtMaturity,
+    eligibility_status: eligibility.status,
+    eligibility_reasons: eligibility.reasons,
+  };
+}
+
+export function buildExplanationSummary(
+  result: CreditScoreResult,
+  language: 'en' | 'ar' = 'en'
+): string {
+  return buildDeterministicExplanation(
+    {
+      loanType: result.features.loan_type,
+      loanCurrency: result.features.loan_currency,
+      annualRate: result.features.annual_interest_rate_used,
+      monthlyInstallment: result.features.monthly_installment,
+      totalInterest: result.features.total_interest,
+      totalRepaid: result.features.total_repaid,
+      debtBurdenRatio: result.features.debt_burden_ratio,
+      dbrCap: DBR_CAP,
+      ageAtMaturity: result.features.age_at_maturity,
+      ageAtMaturityCap: AGE_AT_MATURITY_CAP,
+      eligible: result.features.eligibility_status === 'eligible',
+      score: result.score,
+      category: result.category,
+    },
+    language
+  );
+}
+
+/**
+ * Compute risk score and per-feature impacts (additive attribution), using
+ * the bank-calculator-style deterministic engine. This is always the source
+ * of truth — AI never computes or overrides these numbers.
  */
 export function computeCreditScore(input: CreditScoreInput): CreditScoreResult {
   const features = buildDerivedFeatures(input);
-  const contributions: FeatureContribution[] = [];
 
-  const dsrImpact = Math.min(38, Math.max(0, (features.debt_service_ratio - 0.3) * 65));
-  contributions.push({
-    key: 'debt_service_ratio',
-    labelEn: 'Debt service ratio (expenses + loans + new payment / income)',
-    labelAr: 'نسبة خدمة الدين (مصاريف + قروض + دفعة جديدة / الدخل)',
-    displayValue: fmtPct(features.debt_service_ratio),
-    impact: round2(dsrImpact),
-  });
-
-  const loanAmountImpact = Math.min(
-    22,
-    Math.max(0, (features.loan_to_monthly_income_ratio - 2) * 4.5)
+  const requestedLoanAmountInSalaryCurrency = convertCurrency(
+    features.requested_loan_amount,
+    features.loan_currency,
+    features.salary_currency
   );
-  contributions.push({
-    key: 'requested_loan_amount',
-    labelEn: 'Requested loan amount (relative to monthly income)',
-    labelAr: 'مبلغ القرض المطلوب (نسبة إلى الدخل الشهري)',
-    displayValue: `${fmtMoney(features.requested_loan_amount)} (${features.loan_to_monthly_income_ratio.toFixed(1)}× monthly income)`,
-    impact: round2(loanAmountImpact),
+
+  const scoring = computeFormulaRiskScore({
+    debtBurdenRatio: features.debt_burden_ratio,
+    dbrCap: DBR_CAP,
+    ageAtMaturity: features.age_at_maturity,
+    ageAtMaturityCap: AGE_AT_MATURITY_CAP,
+    loanTermYears: features.loan_term_years,
+    requestedLoanAmountInSalaryCurrency,
+    monthlySalary: features.monthly_income,
+    monthlyObligations: features.monthly_obligations,
+    employmentType: features.employment_type,
   });
 
-  const newPaymentImpact = Math.min(
-    18,
-    Math.max(0, (features.estimated_new_loan_payment / Math.max(features.monthly_income, 1) - 0.15) * 55)
-  );
-  contributions.push({
-    key: 'estimated_new_loan_payment',
-    labelEn: 'Estimated new loan monthly payment',
-    labelAr: 'القسط الشهري المقدر للقرض الجديد',
-    displayValue: fmtMoney(features.estimated_new_loan_payment),
-    impact: round2(newPaymentImpact),
-  });
-
-  const existingImpact = Math.min(
-    12,
-    Math.max(0, (features.existing_loan_monthly_payment / Math.max(features.monthly_income, 1)) * 45)
-  );
-  contributions.push({
-    key: 'existing_loans',
-    labelEn: 'Existing loan obligations',
-    labelAr: 'القروض الحالية',
-    displayValue: fmtMoney(features.existing_loans),
-    impact: round2(existingImpact),
-  });
-
-  const expenseImpact = Math.min(
-    10,
-    Math.max(0, (features.monthly_expenses / Math.max(features.monthly_income, 1) - 0.35) * 22)
-  );
-  contributions.push({
-    key: 'monthly_expenses',
-    labelEn: 'Monthly expenses burden',
-    labelAr: 'عبء المصاريف الشهرية',
-    displayValue: fmtMoney(features.monthly_expenses),
-    impact: round2(expenseImpact),
-  });
-
-  let disposableImpact = 0;
-  if (features.disposable_income < 0) {
-    disposableImpact = Math.min(20, 12 + Math.abs(features.disposable_income) / 100);
-  } else if (features.monthly_income > 0) {
-    const disposableRatio = features.disposable_income / features.monthly_income;
-    disposableImpact = Math.min(12, Math.max(0, (0.12 - disposableRatio) * 40));
-  }
-  contributions.push({
-    key: 'disposable_income',
-    labelEn: 'Disposable income after all obligations',
-    labelAr: 'الدخل المتاح بعد جميع الالتزامات',
-    displayValue: fmtMoney(features.disposable_income),
-    impact: round2(disposableImpact),
-  });
-
-  const incomeImpact =
-    features.monthly_income < 2000
-      ? Math.min(8, (2000 - features.monthly_income) / 250)
-      : Math.max(-5, Math.min(0, (features.monthly_income - 6000) / -800));
-  contributions.push({
-    key: 'monthly_income',
-    labelEn: 'Monthly salary / income level',
-    labelAr: 'الراتب / مستوى الدخل الشهري',
-    displayValue: fmtMoney(features.monthly_income),
-    impact: round2(incomeImpact),
-  });
-
-  const employmentImpact = EMPLOYMENT_RISK[features.employment_type] ?? 5;
-  contributions.push({
-    key: 'employment_type',
-    labelEn: 'Employment stability',
-    labelAr: 'استقرار التوظيف',
-    displayValue: features.employment_type,
-    impact: employmentImpact,
-  });
-
-  contributions.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
-
-  const rawScore =
-    8 +
-    contributions.reduce((sum, c) => sum + c.impact, 0);
-
-  const score = clampScore(rawScore);
-  const category = categoryFromScore(score);
+  const eligible = features.eligibility_status === 'eligible';
+  const { score, category, contributions } = applyEligibilityOverride(scoring, eligible);
 
   const inferencePayload = {
     input: { ...input },
@@ -339,11 +402,49 @@ export function computeCreditScore(input: CreditScoreInput): CreditScoreResult {
 
   console.info('[credit-scoring] inference payload:', inferencePayload);
 
+  return { score, category, features, contributions, inferencePayload };
+}
+
+export function serializeRiskExplanation(result: CreditScoreResult): SavedRiskExplanation {
+  const topFactors = result.contributions
+    .filter((c) => Math.abs(c.impact) >= 0.5)
+    .slice(0, 6);
+
+  const eligible = result.features.eligibility_status === 'eligible';
+  // Eligibility is a hard gate: an ineligible application is always
+  // recommended for rejection, regardless of the soft category.
+  const recommended_action: RecommendedAction = !eligible
+    ? 'reject'
+    : result.category === 'low'
+      ? 'approve'
+      : result.category === 'medium'
+        ? 'manual_review'
+        : 'reject';
+
   return {
-    score,
-    category,
-    features,
-    contributions,
-    inferencePayload,
+    risk_score: result.score,
+    risk_category: result.category,
+    risk_confidence: null,
+    risk_explanation_summary: buildExplanationSummary(result, 'en'),
+    risk_top_factors: topFactors,
+    risk_derived_features: result.features,
+    recommended_action,
+    result_source: 'formula',
+    assessed_at: new Date().toISOString(),
+
+    loan_type: result.features.loan_type,
+    loan_currency: result.features.loan_currency,
+    salary_currency: result.features.salary_currency,
+    monthly_obligations: result.features.monthly_obligations,
+    client_age: result.features.client_age,
+    loan_term_years: result.features.loan_term_years,
+    annual_interest_rate_used: result.features.annual_interest_rate_used,
+    monthly_installment: result.features.monthly_installment,
+    total_interest: result.features.total_interest,
+    total_repaid: result.features.total_repaid,
+    debt_burden_ratio: result.features.debt_burden_ratio,
+    age_at_maturity: result.features.age_at_maturity,
+    eligibility_status: result.features.eligibility_status,
+    ai_explanation: null,
   };
 }

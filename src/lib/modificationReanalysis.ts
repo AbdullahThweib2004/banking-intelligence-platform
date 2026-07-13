@@ -18,6 +18,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
+import type { CreditScoreInput, ResultSource } from '@/lib/creditScoring';
 
 /**
  * Fields that feed the ML/AI credit model. A change to any of these on an
@@ -35,6 +36,13 @@ export const SCORING_FIELDS = new Set<string>([
   'existing_loans',
   'loan_to_income_ratio',
   'employment_type',
+  // Bank-calculator-style fields that also feed the deterministic engine.
+  'loan_type',
+  'loan_currency',
+  'salary_currency',
+  'monthly_obligations',
+  'client_age',
+  'loan_term_years',
 ]);
 
 export function isScoringField(field: string | null | undefined): boolean {
@@ -76,6 +84,12 @@ interface ApplicationScoringRow {
   loan_purpose: string | null;
   risk_score: number | null;
   risk_category: 'low' | 'medium' | 'high' | null;
+  loan_type: string | null;
+  loan_currency: string | null;
+  salary_currency: string | null;
+  monthly_obligations: number | null;
+  client_age: number | null;
+  loan_term_years: number | null;
 }
 
 export interface ReanalysisActor {
@@ -92,7 +106,7 @@ export type ReanalysisResult =
       oldCategory: string | null;
       newScore: number;
       newCategory: 'low' | 'medium' | 'high';
-      source: 'ai' | 'algorithm';
+      source: ResultSource;
     }
   | { status: 'failed'; error: string };
 
@@ -113,7 +127,8 @@ export async function reanalyzeApplicationAfterModification(params: {
   const { data, error } = await supabase
     .from('approval_requests')
     .select(
-      'id, customer_name, monthly_income, monthly_expenses, existing_loans, amount, employment_type, loan_purpose, risk_score, risk_category'
+      `id, customer_name, monthly_income, monthly_expenses, existing_loans, amount, employment_type, loan_purpose, risk_score, risk_category,
+       loan_type, loan_currency, salary_currency, monthly_obligations, client_age, loan_term_years`
     )
     .eq('id', applicationId)
     .maybeSingle();
@@ -131,7 +146,10 @@ export async function reanalyzeApplicationAfterModification(params: {
   const oldCategory = row.risk_category;
 
   try {
-    // 2. Re-run the SAME assessment pipeline with the latest values.
+    // 2. Re-run the SAME assessment pipeline with the latest values. Bank-
+    //    calculator fields fall back to creditScoring.ts's own defaults
+    //    (resolveInput) when the row predates this refactor and has them
+    //    NULL, so reanalysis never breaks on an old application.
     const { snapshot, source } = await assessCreditRisk({
       monthlyIncome: Number(row.monthly_income) || 0,
       monthlyExpenses: Number(row.monthly_expenses) || 0,
@@ -139,6 +157,12 @@ export async function reanalyzeApplicationAfterModification(params: {
       requestedLoanAmount: Number(row.amount) || 0,
       employmentType: row.employment_type || 'unknown',
       loanPurpose: row.loan_purpose || 'unknown',
+      loanType: (row.loan_type as CreditScoreInput['loanType']) || undefined,
+      loanCurrency: (row.loan_currency as CreditScoreInput['loanCurrency']) || undefined,
+      salaryCurrency: (row.salary_currency as CreditScoreInput['salaryCurrency']) || undefined,
+      monthlyObligations: row.monthly_obligations != null ? Number(row.monthly_obligations) : undefined,
+      clientAge: row.client_age != null ? Number(row.client_age) : undefined,
+      loanTermYears: row.loan_term_years != null ? Number(row.loan_term_years) : undefined,
     });
 
     // 3. Overwrite the stored snapshot with the fresh result. The core score
@@ -157,6 +181,23 @@ export async function reanalyzeApplicationAfterModification(params: {
         result_source: snapshot.result_source,
         assessed_at: snapshot.assessed_at,
         priority: snapshot.risk_category === 'high' ? 'urgent' : 'normal',
+        // Bank-calculator-style fields — kept in sync so the result view
+        // shows the re-analyzed installment/DBR/eligibility, not the stale
+        // pre-modification ones.
+        loan_type: snapshot.loan_type,
+        loan_currency: snapshot.loan_currency,
+        salary_currency: snapshot.salary_currency,
+        monthly_obligations: snapshot.monthly_obligations,
+        client_age: snapshot.client_age,
+        loan_term_years: snapshot.loan_term_years,
+        annual_interest_rate_used: snapshot.annual_interest_rate_used,
+        monthly_installment: snapshot.monthly_installment,
+        total_interest: snapshot.total_interest,
+        total_repaid: snapshot.total_repaid,
+        debt_burden_ratio: snapshot.debt_burden_ratio,
+        age_at_maturity: snapshot.age_at_maturity,
+        eligibility_status: snapshot.eligibility_status,
+        ai_explanation: snapshot.ai_explanation,
       })
       .eq('id', applicationId);
 
