@@ -9,7 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { answerQuestion } from '@/lib/rag';
+import { answerHybridQuestion, formatSourceLabel } from '@/lib/chatHybridAnswer';
 import type { Citation } from '@/lib/rag';
 import {
   MAX_HISTORY_CHATS,
@@ -34,6 +34,8 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   sources?: Citation[];
+  /** Short "where this came from" badge text — session-only, not persisted (not reconstructable after reload without re-classifying). */
+  sourceLabel?: string;
 }
 
 function mapMessageRow(row: {
@@ -239,7 +241,7 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           }
         }
 
-        const result = await answerQuestion(query, {
+        const result = await answerHybridQuestion(query, {
           history: historySnapshot.map((m) => ({
             role: m.role,
             content: m.content,
@@ -255,7 +257,8 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             role: 'assistant',
             content: result.answer,
             timestamp: new Date(),
-            sources: result.found ? result.citations : undefined,
+            sources: result.citations.length > 0 ? result.citations : undefined,
+            sourceLabel: formatSourceLabel(result.source, result.language),
           },
         ]);
 
@@ -280,7 +283,7 @@ export const AIChatProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             conversationId,
             'assistant',
             result.answer,
-            result.found ? result.citations : undefined
+            result.citations.length > 0 ? result.citations : undefined
           );
 
           if (assistantSave.ok) {

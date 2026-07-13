@@ -388,6 +388,11 @@ export const AIAssistant: React.FC = () => {
 
                             {message.role === 'assistant' && (
                               <div className="mt-2 space-y-2">
+                                {message.sourceLabel && (
+                                  <span className="inline-block rounded-full border border-border/60 bg-background/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                                    {message.sourceLabel}
+                                  </span>
+                                )}
                                 {message.sources && message.sources.length > 0 && (
                                   <div className="rounded-lg border border-border/60 bg-background/50 p-3">
                                     <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
