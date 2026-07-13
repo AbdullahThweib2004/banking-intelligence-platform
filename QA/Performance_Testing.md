@@ -1,17 +1,19 @@
 # Performance Testing Report
 
-**Date:** 2026-07-06  
+**Date:** 2026-07-06; **rebased 2026-07-13**  
 **Environment:** Local build audit (no load generator)
 
 ## Build metrics
 
-| Metric | Value | Threshold | Status |
-|--------|------:|-----------|--------|
-| Vite build time | 3.01s | — | OK |
-| Main JS bundle (minified) | 896.69 KB | 500 KB warning | **WARN** BUG-010 |
-| Main JS gzip | 262.59 KB | — | Acceptable |
-| CSS bundle | 79.63 KB | — | OK |
-| Modules transformed | 1854 | — | — |
+| Metric | Value (2026-07-06) | Value (2026-07-13) [rebased] | Threshold | Status |
+|--------|------:|------:|-----------|--------|
+| Vite build time | 3.01s | 3.94s | — | OK |
+| Main JS bundle (minified) | 896.69 KB | **957.39 kB** | 500 KB warning | **WARN** BUG-010 — grew further |
+| Main JS gzip | 262.59 KB | **281.39 kB** | — | Acceptable, but growing |
+| CSS bundle | 79.63 KB | **82.86 KB** | — | OK |
+| Modules transformed | 1854 | **1870** | — | — |
+
+**Growth attribution:** the +60.7 kB / +18.8 kB gzip increase traces to the 5 new `loan*.ts` modules, the expanded Global Help System (6 new components), and the new onboarding-tour config — all additive, no dead code identified as the cause.
 
 ## Static performance observations
 

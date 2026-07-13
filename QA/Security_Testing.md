@@ -1,7 +1,9 @@
 # Security Testing Report
 
-**Date:** 2026-07-06  
+**Date:** 2026-07-06; **rebased 2026-07-13**  
 **Method:** Static analysis + threat modeling (OWASP-oriented)
+
+> **Rebase note:** the new `bank_customers` INSERT policy and the `manage-users` edge function directory were reviewed this cycle. No new access-control defects were found; BUG-001 (FastAPI header trust) remains the top open finding, unchanged.
 
 ## Summary
 
@@ -35,10 +37,12 @@ Any client can set `X-User-Role: branch_manager`. Frontend sends role from `Auth
 - `audit_logs`: no UPDATE/DELETE policies (append-only) ✅
 - `approval_requests`: employee SELECT scoped to `employee_id` ✅
 - Edge `admin-users`: verifies caller is manager via JWT ✅
+- **[New] `bank_customers` INSERT**: restricted via RLS to `branch_employee`/`branch_manager` roles only; `risk` role cannot create customers ✅ (verified by code inspection of the migration; live RLS enforcement across all 3 roles is BLOCKED without a credentialed session)
+- **[New] `bank_customers.national_id`**: `UNIQUE` constraint prevents duplicate customer records at the database layer, not just the application layer — a defense-in-depth improvement over the baseline's app-only assumption ✅
 
 ## Edge function CORS
 
-`Access-Control-Allow-Origin: *` on credit-assessment and policy-search — acceptable for demo; restrict in production.
+`Access-Control-Allow-Origin: *` on credit-assessment and policy-search — acceptable for demo; restrict in production. **[New]** `manage-users` directory exists but is empty (zero files) and untracked by git — not a functioning endpoint, so no CORS/auth surface to review; treated as harmless orphaned scaffold (see `Known_Issues.md`).
 
 ## XSS review
 

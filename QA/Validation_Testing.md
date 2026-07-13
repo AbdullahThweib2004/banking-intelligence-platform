@@ -1,6 +1,6 @@
 # Validation Testing Report
 
-**Date:** 2026-07-06  
+**Date:** 2026-07-06; **rebased 2026-07-13**  
 **Method:** Static code review of form handlers and API contracts
 
 ## Credit Risk — New Assessment
@@ -12,6 +12,12 @@
 | Loan amount | Required, numeric | Parsed and validated | **PASS** |
 | Loan-restricted customer | Block assessment | `loan_restricted` check | **PASS** static |
 | Negative income | Clamped in scoring | `buildDerivedFeatures` UT | **PASS** |
+| **Loan type [new]** | Required selection | `LOAN_PRODUCT_IDS` Select, validated on submit | **PASS** static |
+| **Currencies [new]** | Required selection | `LOAN_CURRENCIES` Select ×2 (loan/salary) | **PASS** static |
+| **Client age [new]** | 18–100 range | Client-side range check before submit | **PASS** static |
+| **Loan term (years) [new]** | 1–30 range | Client-side range check before submit | **PASS** static |
+| **DBR cap (50%) [new]** | Hard eligibility gate, not just a warning | `loanEligibility.ts` `evaluateEligibility()` — UT | **PASS** |
+| **Age-at-maturity cap (70) [new]** | Hard eligibility gate | Same as above — UT | **PASS** |
 
 ## Objection / Modification Dialog
 
@@ -35,6 +41,9 @@
 | ID image upload | Required for OCR | Wizard step validation | **PASS** static |
 | Extracted fields | User can edit | Form editable | **PASS** static |
 | Loan-restricted | Block open | API + customer check | Partial |
+| **National ID uniqueness [new]** | No duplicate `bank_customers` rows | DB `UNIQUE(national_id)` constraint + app-level find-first check | **PASS** — container-verified; live BLOCKED |
+| **Missing/incomplete OCR fields [new]** | Placeholder defaults, never a hard failure | `accountOpeningDefaults.ts` fills clearly-labeled temporary values | **PASS** static |
+| **Account number generation [new]** | Never computed client-side | DB sequence + `BEFORE INSERT` trigger only | **PASS** — container-verified; confirmed no client-side arithmetic via `grep` |
 
 ## Auth
 

@@ -1,6 +1,6 @@
 # Improvements Recommendations
 
-**Date:** 2026-07-06  
+**Date:** 2026-07-06; **rebased 2026-07-13** — items 31–35 added below  
 **Priority:** P0 = before production; P1 = before pilot; P2 = nice-to-have
 
 ## Product improvements
@@ -73,8 +73,20 @@
 | 29 | Demo rehearsal script linked from README | P2 | Low |
 | 30 | Architecture diagram (frontend ↔ Supabase ↔ FastAPI) | P2 | Low |
 
+## New this rebase (2026-07-13)
+
+| # | Improvement | Priority | Effort |
+|---|-------------|----------|--------|
+| 31 | **Re-confirm the `age_at_maturity` schema-cache fix live and add a post-migration smoke check to the deploy routine (BUG-014)** | **P0** | Low |
+| 32 | **Add an automated regression test asserting AI narrative can never override the deterministic score/category/eligibility (currently a design guarantee only, RISK-013)** | P0 | Medium |
+| 33 | **Add a lightweight render-count/no-infinite-loop guard test for the Help System's `useHelpTarget`/`HelpOverlay` (already regressed once, RISK-015)** | P1 | Low |
+| 34 | **Fix the 3 new `no-explicit-any` ref casts in `CreditRisk.tsx` introduced by the Help System build (BUG-013)** | P2 | Low |
+| 35 | **Add a periodic live audit query for any `bank_customers.account_number` outside the `BOP-1xxxxx` family, as a cheap ongoing guard against the numbering bug class recurring (RISK-011)** | P1 | Low |
+| 36 | Remove or clean up the empty, untracked `supabase/functions/manage-users/` directory | P2 | Low |
+| 37 | Add Playwright/Cypress smoke coverage for the two new live-write flows (account creation, loan assessment submission) — unit tests alone did not catch BUG-014 | **P0** | Medium |
+
 ## Recommended sprint order (graduation → pilot)
 
-1. **Week 1:** Items 12, 13, 17, 21 (security + smoke E2E + lint)
-2. **Week 2:** Items 1, 9, 18, 20 (data accuracy + API tests + CI)
-3. **Week 3:** Items 8, 14, 19, 23 (role UX + integration tests + performance)
+1. **Week 1:** Items 12, 13, 17, 21, **31** (security + smoke E2E + lint + live schema-cache re-confirmation)
+2. **Week 2:** Items 1, 9, 18, 20, **37** (data accuracy + API tests + CI + new-flow E2E)
+3. **Week 3:** Items 8, 14, 19, 23, **32, 33** (role UX + integration tests + performance + regression-test hardening for the new invariants)

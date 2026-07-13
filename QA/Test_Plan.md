@@ -2,18 +2,19 @@
 
 **Project:** Bank of Palestine Intelligence Platform  
 **Document ID:** QA-TP-001  
-**Version:** 1.0  
+**Version:** 1.0 (2026-07-06); **rebased 2026-07-13, see `Rebased_QA_Baseline.md`**  
 **Date:** 2026-07-06
 
 ## 1. Scope
 
 ### In scope
 - React frontend (11 routes, 12 page components)
-- Supabase Auth, Postgres RLS, 3 edge functions, 19 migrations
+- Supabase Auth, Postgres RLS, **4 edge function directories (3 functioning + 1 confirmed empty/orphaned `manage-users`), 22 migrations (was 3/19 at baseline)**
 - FastAPI OCR/account-opening backend (6 endpoints)
 - Role-based access for 3 bank roles
-- Credit assessment (AI + algorithm fallback)
-- Documents lifecycle, AI assistant, audit log, user management
+- Credit assessment — **rebased: a deterministic loan-calculator engine (EMI, DBR, age-at-maturity, weighted risk scoring) with an optional AI explanation-only layer, replacing the old "AI + algorithm fallback" framing**
+- Documents lifecycle (now includes a real `bank_customers` write with DB-generated sequential account numbering), AI assistant, audit log, user management
+- **New in scope this rebase:** Global Help System (8 pages), Open New Account real-write flow, loan-assessment schema/migration integrity
 
 ### Out of scope
 - Supabase infrastructure SLA / hosting
@@ -34,11 +35,12 @@
 | Auth | `AuthContext`, `Auth.tsx`, Supabase session |
 | RBAC | `roles.ts`, `ProtectedRoute`, RLS policies |
 | Dashboard | Stats RPC, recent activity hook |
-| Credit Risk | Assessment, objection, approvals in-table |
+| Credit Risk | Assessment, objection, approvals in-table, **loan calculation engine (`loanCalculator.ts`/`loanEligibility.ts`/`loanRiskScoring.ts`), AI explanation layer** |
 | Approvals | Queue, approve/reject, modification panel |
-| Documents | Table CRUD, account wizard, OCR API |
+| Documents | Table CRUD, account wizard, OCR API, **real `bank_customers` write via `bankCustomers.ts`** |
 | AI Assistant | Chat, RAG, history persistence |
 | Admin | User management edge function, audit log |
+| **Help System [new]** | Help overlay, targeting, onboarding coexistence across 8 pages |
 
 ## 4. Assumptions
 - Supabase project deployed with all migrations applied

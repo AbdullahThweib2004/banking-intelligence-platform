@@ -1,18 +1,18 @@
 # Test Strategy
 
 **Document ID:** QA-TS-001  
-**Date:** 2026-07-06
+**Date:** 2026-07-06; **rebased 2026-07-13**
 
 ## 1. Testing levels
 
-| Level | Approach | Tools | Status |
-|-------|----------|-------|--------|
-| Unit | Pure functions: roles, credit scoring | Node `node:test`, `npm test` | **9 tests PASS** |
-| Integration | Supabase client + RLS (manual) | Browser + Supabase dashboard | Blocked without live creds |
-| API | FastAPI Swagger + curl | `/docs`, scripts | Partial static |
-| E2E UI | Full workflows per role | *Not implemented* | Gap |
-| Security | Static code + policy review | Manual | Complete (static) |
-| Performance | Build size, obvious N+1 | Static | Partial |
+| Level | Approach | Tools | Status | 2026-07-13 [rebased] |
+|-------|----------|-------|--------|--------|
+| Unit | Pure functions: roles, credit scoring, **loan calculation engine** | Node `node:test`, `npm test` | **9 tests PASS** | **37 tests PASS, 8 suites** |
+| Integration | Supabase client + RLS (manual), **incl. new `bank_customers` INSERT policy** | Browser + Supabase dashboard | Blocked without live creds | Still blocked; sequencing/concurrency verified in a Docker container instead |
+| API | FastAPI Swagger + curl | `/docs`, scripts | Partial static | Unchanged |
+| E2E UI | Full workflows per role | *Not implemented* | Gap | Still a gap — now covers a larger, higher-stakes surface (see `Automation_Testing.md`) |
+| Security | Static code + policy review | Manual | Complete (static) | Re-reviewed; new `bank_customers` INSERT policy added |
+| Performance | Build size, obvious N+1 | Static | Partial | Bundle grew to 957.39 kB / 281.39 kB gzip |
 
 ## 2. Testing types applied
 
@@ -60,12 +60,14 @@
 
 ## 6. Automation strategy
 
-**Current:** `src/lib/__tests__/qa.test.ts` (9 tests)
+**Current [rebased]:** `src/lib/__tests__/qa.test.ts` + `src/lib/__tests__/loanEngine.test.ts` (37 tests, up from 9)
 
 **Recommended next:**
 1. Add Vitest + `@testing-library/react` for Auth/ProtectedRoute
-2. Add Playwright smoke: login → dashboard → credit assessment form
+2. Add Playwright smoke: login → dashboard → credit assessment form → **new: account creation, loan assessment submission**
 3. Add pytest for FastAPI auth once JWT validation added
+4. **[New]** Add a regression test asserting AI narrative can never override the deterministic score/category (currently a design guarantee, not a tested one — see RISK-013 in `Risk_Register.md`)
+5. **[New]** Add a lightweight render-count/no-infinite-loop guard for the Help System (RISK-015)
 
 See `Automation_Testing.md`.
 

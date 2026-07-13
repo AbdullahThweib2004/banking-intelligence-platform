@@ -1,6 +1,7 @@
 # Role Permission Matrix
 
 **Source:** `src/lib/roles.ts`, `App.tsx`, RLS migrations
+**Rebased 2026-07-13:** route/action matrix itself is unchanged (no code changes detected in `roles.ts` or `App.tsx` this cycle); the new `bank_customers` INSERT policy is added to the Data visibility table below.
 
 ## Route access (frontend)
 
@@ -37,8 +38,10 @@
 | documents SELECT | all (branch roles) | all | all |
 | documents DELETE own | ✅ | ✅ all | ✅ all |
 | profiles SELECT | own | all (policy) | own |
+| **bank_customers INSERT [new]** | ✅ | ✅ | ❌ |
+| **bank_customers SELECT** | all (unchanged from baseline) | all | all |
 
 ## Test result
 
-Static matrix matches implementation: **PASS**  
-Live RLS enforcement: **BLOCKED** (requires multi-user session test)
+Static matrix matches implementation: **PASS** — including the new `bank_customers` INSERT row, which correctly mirrors the existing "risk cannot open account" rule already covered by `TC-RBAC-05`  
+Live RLS enforcement: **BLOCKED** (requires multi-user session test) — unchanged limitation, now also applies to the new INSERT policy

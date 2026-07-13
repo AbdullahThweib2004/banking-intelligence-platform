@@ -2,9 +2,11 @@
 
 **Project:** Bank of Palestine Intelligence Platform  
 **Version audited:** `0.0.0` (graduation build)  
-**Audit date:** 2026-07-06  
+**Audit date:** 2026-07-06; **rebased 2026-07-13**  
 **QA lead:** Automated + static audit (Cursor QA Agent)  
 **SRS reference:** `QA/SRS_Baseline.md` (reconstructed from project context)
+
+> **Rebase note (2026-07-13):** This report's headline numbers below are stale for the current codebase — a Global Help System, a real "Open New Account" write path, and a full loan/credit-risk engine refactor landed after Jul 6. See `Change_Impact_Assessment.md` for the full diff, `QA_Summary_After_Rebase.md` for the current executive summary, and the corrected metrics inline below (marked **[rebased]**).
 
 ---
 
@@ -16,19 +18,19 @@ The platform implements the core graduation scope: 3-role RBAC, credit assessmen
 
 ## Summary metrics
 
-| Metric | Count |
-|--------|------:|
-| Requirements reviewed (PRB + NFR) | 34 |
-| Test cases documented | 96 |
-| Automated tests executed | 9 |
-| Automated tests passed | **9** |
-| Automated tests failed | 0 |
-| Static defects logged | **12** |
-| Confirmed bugs (reproducible) | **8** |
-| Gaps / partial compliance | **6** |
-| Blocked dynamic tests (env) | 18 |
-| ESLint errors | 3 |
-| Production build | **PASS** |
+| Metric | Count | 2026-07-13 [rebased] |
+|--------|------:|------:|
+| Requirements reviewed (PRB + NFR) | 34 | **44** |
+| Test cases documented | 96 | **122** |
+| Automated tests executed | 9 | **37** |
+| Automated tests passed | **9** | **37** |
+| Automated tests failed | 0 | 0 |
+| Static defects logged | **12** | **14** |
+| Confirmed bugs (reproducible) | **8** | **9** |
+| Gaps / partial compliance | **6** | 6 |
+| Blocked dynamic tests (env) | 18 | **74** |
+| ESLint errors | 3 | **6** (see BUG-013) |
+| Production build | **PASS** | **PASS** (bundle grew to 957.39 kB / 281.39 kB gzip) |
 
 ---
 
@@ -115,6 +117,7 @@ Blocked scenarios are marked **BLOCKED** in `Test_Cases.md` with static analysis
 
 All artifacts live under `/QA`:
 
+- Rebase entry points **[new 2026-07-13]**: `Change_Impact_Assessment.md`, `Rebased_QA_Baseline.md`, `QA_Summary_After_Rebase.md`
 - Test planning: `Test_Plan.md`, `Test_Strategy.md`
 - Execution: `Testing_Report.md`, `Test_Summary.md`, `Test_Cases.md`
 - Coverage: `Requirements_Traceability_Matrix.md`, `Coverage_Map.md`, `Role_Permission_Matrix.md`
@@ -123,7 +126,7 @@ All artifacts live under `/QA`:
 
 ## Automated tests added
 
-- `src/lib/__tests__/qa.test.ts` — 9 tests (roles + credit scoring)
+- `src/lib/__tests__/qa.test.ts` + `src/lib/__tests__/loanEngine.test.ts` — **37 tests** (roles + credit scoring + loan engine), up from 9
 - Run: `npm test`
 
 ---

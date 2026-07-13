@@ -1,6 +1,6 @@
 # API Testing Report
 
-**Date:** 2026-07-06
+**Date:** 2026-07-06; **rebased 2026-07-13**
 
 ## API inventory
 
@@ -23,35 +23,35 @@
 
 | Function | Method | Auth | Purpose | Test status |
 |----------|--------|------|---------|-------------|
-| `credit-assessment` | POST | Supabase JWT (anon key + user token) | AI credit scoring | BLOCKED live |
+| `credit-assessment` | POST | Supabase JWT (anon key + user token) | **[rebased]** AI *narrative-only* generation — completely rewritten, no longer computes the score | BLOCKED live |
 | `policy-search` | POST | JWT | RAG policy Q&A | BLOCKED live |
 | `admin-users` | POST | JWT + manager role check | User CRUD | BLOCKED live |
+| **`manage-users` [new]** | — | — | **Empty directory, zero files, untracked by git, unreferenced anywhere in the frontend** | N/A — confirmed orphaned scaffold, not a live endpoint |
 
 ### Supabase RPC / REST (via client)
 
 | RPC/Table | Operation | RLS | Test status |
 |-----------|-----------|-----|-------------|
 | `get_platform_stats()` | SELECT | Authenticated | BLOCKED live |
-| `approval_requests` | CRUD | Role-based RLS | Static **PASS** |
+| `approval_requests` | CRUD | Role-based RLS, **schema widened by 14 new columns this cycle** | Static **PASS**; new columns caused a live schema-cache error (BUG-014), fixed in migration, live re-confirmation pending |
 | `documents` | CRUD + storage | Role-based RLS | Static **PASS** |
 | `audit_logs` | INSERT (trigger), SELECT | Risk-only read | Static **PASS** |
 | `profiles` | SELECT/UPDATE | Own + admin | Static **PASS** |
-| `bank_customers` | SELECT | Authenticated | BLOCKED live |
+| `bank_customers` | SELECT + **INSERT [new]** | Authenticated (SELECT); **INSERT restricted to branch_employee/branch_manager [new]** | BLOCKED live; INSERT path container-verified (Docker Postgres) |
 
 ## Response contract review
 
-### credit-assessment (expected)
+### credit-assessment (rebased — expected)
 
 ```json
 {
-  "risk_score": 0-100,
-  "risk_category": "low|medium|high",
-  "explanation": "...",
-  "result_source": "ai|algorithm"
+  "explanation": "..."
 }
 ```
 
-Static review: matches `aiCreditAssessment.ts` consumer. **PASS**
+**Changed from baseline:** the edge function no longer returns `risk_score`/`risk_category`/`result_source` — those are now computed entirely client-side (`loanRiskScoring.ts`/`loanEligibility.ts`) before the edge function is even called, and passed in as `formula_result` alongside `input`. The edge function's `SYSTEM_PROMPT` explicitly instructs the model not to recompute or contradict the given numbers, only explain them. This is the architectural core of the "AI cannot override the numeric result" invariant — see RISK-013 in `Risk_Register.md` for why this should also be covered by an automated test, not just this contract review.
+
+Static review: matches `aiCreditAssessment.ts` consumer (`requestAiNarrative()`). **PASS**
 
 ### /health (verified structure)
 
