@@ -19,6 +19,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
 import type { CreditScoreInput, ResultSource } from '@/lib/creditScoring';
+import { explainIfSchemaCacheError } from '@/lib/schemaVerification';
 
 /**
  * Fields that feed the ML/AI credit model. A change to any of these on an
@@ -203,7 +204,8 @@ export async function reanalyzeApplicationAfterModification(params: {
 
     if (updErr) {
       console.error('[reanalysis] failed to persist new score:', updErr);
-      return { status: 'failed', error: updErr.message };
+      const schemaMessage = await explainIfSchemaCacheError(updErr);
+      return { status: 'failed', error: schemaMessage ?? updErr.message };
     }
 
     // Best-effort status flag (no-op if the migration is not applied yet).

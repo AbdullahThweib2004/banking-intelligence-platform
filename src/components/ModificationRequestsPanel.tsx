@@ -208,11 +208,11 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
             : `Risk recalculated: ${result.oldScore ?? '—'} → ${result.newScore} (${result.newCategory})`
         );
       } else if (result.status === 'failed') {
-        toast.error(
+        const prefix =
           language === 'ar'
             ? 'فشل إعادة تحليل المخاطر. تم وضع علامة "بحاجة لإعادة تحليل" على الطلب.'
-            : 'Risk re-analysis failed. The application is flagged as "needs re-analysis".'
-        );
+            : 'Risk re-analysis failed. The application is flagged as "needs re-analysis".';
+        toast.error(result.error ? `${prefix} (${result.error})` : prefix);
       }
       setReanalyzing(false);
     }

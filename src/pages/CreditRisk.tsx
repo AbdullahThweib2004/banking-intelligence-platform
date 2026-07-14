@@ -58,6 +58,7 @@ import { toast } from 'sonner';
 import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
 import { LOAN_PRODUCTS, LOAN_PRODUCT_IDS, LOAN_CURRENCIES, type LoanProductId, type LoanCurrency } from '@/lib/loanProducts';
+import { explainIfSchemaCacheError } from '@/lib/schemaVerification';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRiskInfoPopover } from '@/components/LoanRiskInfoPopover';
 import { useLatestBankCustomer } from '@/hooks/useLatestBankCustomer';
@@ -561,10 +562,12 @@ export const CreditRisk: React.FC = () => {
 
     if (error) {
       console.error('Failed to create assessment:', error);
+      const schemaMessage = await explainIfSchemaCacheError(error, language);
       toast.error(
-        language === 'ar'
-          ? `فشل إنشاء التقييم: ${error.message}`
-          : `Failed to create assessment: ${error.message}`
+        schemaMessage ??
+          (language === 'ar'
+            ? `فشل إنشاء التقييم: ${error.message}`
+            : `Failed to create assessment: ${error.message}`)
       );
       return;
     }
