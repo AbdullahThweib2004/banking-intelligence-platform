@@ -53,7 +53,7 @@ export interface RiskScoringResult {
   contributions: FeatureContribution[];
 }
 
-const BASE_SCORE = 5;
+export const BASE_SCORE = 5;
 const MAX_TERM_YEARS_REFERENCE = 30;
 const LOAN_TO_ANNUAL_INCOME_REFERENCE = 5; // "5x annual salary" treated as a high-stress reference point
 const OBLIGATIONS_TO_SALARY_REFERENCE = 0.3; // 30% of salary already committed is treated as a stress reference point

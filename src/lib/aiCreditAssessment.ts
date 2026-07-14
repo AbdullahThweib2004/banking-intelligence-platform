@@ -23,6 +23,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   computeCreditScore,
   serializeRiskExplanation,
+  mergeAiNarrativeIntoSnapshot,
   type CreditScoreInput,
   type CreditScoreResult,
   type ResultSource,
@@ -227,12 +228,7 @@ export async function assessCreditRisk(input: CreditScoreInput): Promise<Assessm
       category: formulaResult.category,
     });
 
-    const hybridSnapshot: SavedRiskExplanation = {
-      ...baseSnapshot,
-      risk_explanation_summary: explanation,
-      ai_explanation: explanation,
-      result_source: 'hybrid',
-    };
+    const hybridSnapshot = mergeAiNarrativeIntoSnapshot(baseSnapshot, explanation);
 
     return { snapshot: hybridSnapshot, source: 'hybrid', debug };
   } catch (err) {

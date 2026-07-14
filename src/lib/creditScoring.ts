@@ -448,3 +448,27 @@ export function serializeRiskExplanation(result: CreditScoreResult): SavedRiskEx
     ai_explanation: null,
   };
 }
+
+/**
+ * Layers an AI-authored narrative on top of an already-final formula
+ * snapshot. This is the ONLY place an AI narrative is allowed to touch a
+ * saved assessment, and it is deliberately narrow: it can only ever replace
+ * `risk_explanation_summary`, set `ai_explanation`, and flip `result_source`
+ * to 'hybrid'. Every other field — the score, category, eligibility, and
+ * every monetary figure — is spread from `base` untouched, so this function
+ * is structurally incapable of letting an AI response change a number,
+ * no matter what that response contains. Kept here (not in
+ * aiCreditAssessment.ts) so it's covered by the same plain Node test runner
+ * as the rest of the deterministic engine.
+ */
+export function mergeAiNarrativeIntoSnapshot(
+  base: SavedRiskExplanation,
+  explanation: string
+): SavedRiskExplanation {
+  return {
+    ...base,
+    risk_explanation_summary: explanation,
+    ai_explanation: explanation,
+    result_source: 'hybrid',
+  };
+}
