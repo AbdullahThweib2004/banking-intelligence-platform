@@ -154,6 +154,8 @@ interface AssistantChatResponse {
 export async function requestHybridAnswer(params: {
   query: string;
   language: Lang;
+  /** The classifier's best guess (greeting/capability/policy/customer/hybrid/general) — an advisory signal only; the model still decides "source" from what it actually used. */
+  intentHint?: string;
   policyChunks: AssistantPolicyChunkInput[];
   customer: AssistantCustomerContext | null;
   advisory: AssistantAdvisoryResult | null;
@@ -162,6 +164,7 @@ export async function requestHybridAnswer(params: {
   const payload = {
     query: params.query,
     language: params.language,
+    intentHint: params.intentHint ?? null,
     policyChunks: params.policyChunks,
     customer: params.customer,
     advisory: params.advisory,
