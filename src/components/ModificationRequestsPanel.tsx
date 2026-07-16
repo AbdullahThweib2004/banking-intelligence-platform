@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import { Check, X, Search, Loader2, ArrowRight, Eye } from 'lucide-react';
 import { toast } from 'sonner';
+import { HelpTarget } from '@/components/help';
 
 type Status = 'pending' | 'approved' | 'rejected';
 
@@ -279,16 +280,26 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'pending' | 'processed')} className="mb-4">
-            <TabsList>
-              <TabsTrigger value="pending">
-                {language === 'ar' ? 'قيد المراجعة' : 'Pending'} ({pending.length})
-              </TabsTrigger>
-              <TabsTrigger value="processed">
-                {language === 'ar' ? 'معالجة' : 'Processed'} ({processed.length})
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <HelpTarget
+            id="modification-requests-tabs"
+            scope="item"
+            category={language === 'ar' ? 'طلبات التعديل' : 'Modification Requests'}
+            title={language === 'ar' ? 'تبويب قيد المراجعة / معالجة' : 'Pending / Processed tabs'}
+            description={language === 'ar'
+              ? 'يفصل الطلبات التي ما زالت بانتظار مراجعة دائرة المخاطر عن الطلبات التي تمت معالجتها بالفعل (موافقة أو رفض).'
+              : 'Splits requests still awaiting risk-department review from ones already processed (approved or rejected).'}
+          >
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'pending' | 'processed')} className="mb-4">
+              <TabsList>
+                <TabsTrigger value="pending">
+                  {language === 'ar' ? 'قيد المراجعة' : 'Pending'} ({pending.length})
+                </TabsTrigger>
+                <TabsTrigger value="processed">
+                  {language === 'ar' ? 'معالجة' : 'Processed'} ({processed.length})
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </HelpTarget>
 
           <Table>
             <TableHeader>
@@ -345,43 +356,54 @@ export const ModificationRequestsPanel: React.FC<ModificationRequestsPanelProps>
                     {req.created_at.slice(0, 10)}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openDetails(req)}
-                        title={language === 'ar' ? 'عرض التفاصيل' : 'View details'}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {canReview && req.status === 'pending' && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-success border-success/30 hover:bg-success/10"
-                            onClick={() => openReview(req, 'approve')}
-                            disabled={submitting || reanalyzing}
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                            onClick={() => openReview(req, 'reject')}
-                            disabled={submitting || reanalyzing}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </>
-                      )}
-                      {!canReview && req.review_note && (
-                        <span className="text-xs text-muted-foreground max-w-[120px] truncate" title={req.review_note}>
-                          {req.review_note}
-                        </span>
-                      )}
-                    </div>
+                    <HelpTarget
+                      id={`modification-request-actions-${req.id}`}
+                      scope="action"
+                      category={language === 'ar' ? 'طلبات التعديل' : 'Modification Requests'}
+                      title={language === 'ar' ? 'إجراءات طلب التعديل' : 'Modification request actions'}
+                      description={language === 'ar'
+                        ? 'عرض تفاصيل الطلب الكاملة، أو — إن كانت الصلاحية متاحة لدائرة المخاطر وكان الطلب قيد المراجعة — الموافقة عليه أو رفضه. الموافقة على حقل يؤثر على درجة المخاطر تُعيد احتساب التقييم تلقائياً بالقيم الجديدة.'
+                        : 'View the full request details, or — if you are in the risk department and the request is still pending — approve or reject it. Approving a change to a scoring-relevant field automatically re-runs the risk assessment with the new values.'}
+                      asChild
+                    >
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openDetails(req)}
+                          title={language === 'ar' ? 'عرض التفاصيل' : 'View details'}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        {canReview && req.status === 'pending' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-success border-success/30 hover:bg-success/10"
+                              onClick={() => openReview(req, 'approve')}
+                              disabled={submitting || reanalyzing}
+                            >
+                              <Check className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                              onClick={() => openReview(req, 'reject')}
+                              disabled={submitting || reanalyzing}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </HelpTarget>
+                    {!canReview && req.review_note && (
+                      <span className="text-xs text-muted-foreground max-w-[120px] truncate" title={req.review_note}>
+                        {req.review_note}
+                      </span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

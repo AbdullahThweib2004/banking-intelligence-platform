@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useHelp } from './HelpProvider';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { pickBestHelpTarget } from '@/lib/helpTargeting';
+import { hasOpenAppDialog } from '@/lib/helpDialogDetection';
 
 const HIGHLIGHT_RADIUS = 12;
 
@@ -79,6 +80,26 @@ export const HelpOverlay: React.FC = () => {
       if (rafId != null) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
+        // Defensive: a REAL dialog/sheet/alert-dialog rendering above this
+        // overlay (z-50 vs. this overlay's z-[10011]+) would otherwise be
+        // visually and interactively buried under help mode's full-screen
+        // click capture. The normal entry point is already blocked
+        // (HelpWidget hides itself while a dialog is open), so this only
+        // fires for a dialog opened by something other than a click — bail
+        // out of help mode rather than leave the modal unreachable.
+        //
+        // hasOpenAppDialog() deliberately excludes the Help System's own
+        // `role="dialog"` explanation panel (data-help-ui) — without that
+        // exclusion, opening the panel is itself a DOM mutation that this
+        // observer sees, so it would mistake its own panel for an app dialog
+        // and instantly close help mode again (the exact flicker bug this
+        // guards against: select a target -> panel opens -> observer fires
+        // -> setHelpMode(false) -> selectedTargetId is cleared too -> panel
+        // vanishes within the same tick).
+        if (hasOpenAppDialog()) {
+          setHelpMode(false);
+          return;
+        }
         updateHover();
       });
     };
@@ -111,7 +132,10 @@ export const HelpOverlay: React.FC = () => {
 
   // Render svg cutout
   return (
-    <div className="fixed inset-0 z-[10011] pointer-events-auto cursor-help animate-in fade-in duration-300">
+    <div
+      data-help-ui="overlay"
+      className="fixed inset-0 z-[10011] pointer-events-auto cursor-help animate-in fade-in duration-300"
+    >
       <svg
         className="absolute inset-0 w-full h-full pointer-events-none"
         aria-hidden="true"
