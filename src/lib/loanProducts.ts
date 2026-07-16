@@ -115,6 +115,30 @@ export function convertCurrency(amount: number, from: LoanCurrency, to: LoanCurr
   return amountInIls / FX_TO_ILS[to];
 }
 
+/**
+ * Bank-wide minimum requested loan amount: 8,000 USD, or the equivalent in
+ * any other supported currency. This is a business rule (not a rate/product
+ * detail), but it lives here — not in validation.ts — because computing "the
+ * equivalent" must reuse the exact same FX table as every other cross-currency
+ * figure in the app (DBR normalization, etc.). A separate, independently
+ * maintained conversion for this one rule would drift from the real rate
+ * table over time, silently.
+ *
+ * HOW THE EQUIVALENT IS CALCULATED: MIN_LOAN_AMOUNT_USD (8,000) is converted
+ * into the target currency with the SAME static, configured FX_TO_ILS table
+ * used everywhere else in this module — not a separate/live rate. As with
+ * every other FX figure here, this is a configured approximation, not a live
+ * feed (see the file-level comment above). Today that resolves to:
+ *   USD 8,000  -> ILS 28,800.00  -> JOD 5,647.06
+ * Recompute automatically if FX_TO_ILS is ever updated; never hardcode these
+ * three numbers elsewhere.
+ */
+export const MIN_LOAN_AMOUNT_USD = 8000;
+
+export function getMinimumLoanAmount(currency: LoanCurrency): number {
+  return convertCurrency(MIN_LOAN_AMOUNT_USD, 'USD', currency);
+}
+
 export interface ResolvedRate {
   /** Effective annual rate as a decimal, e.g. 0.085 = 8.5%. */
   annualRate: number;

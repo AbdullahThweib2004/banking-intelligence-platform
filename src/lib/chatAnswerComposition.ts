@@ -30,6 +30,7 @@ import {
   parseLoanAmountFromText,
 } from './chatLoanAdvisory.ts';
 import { extractAccountNumbers } from './chatIntent.ts';
+import { getMinimumLoanAmount } from './loanProducts.ts';
 
 /** Minimal shape needed from a history turn — avoids importing rag.ts's ChatTurn just for this. */
 export interface ChatTurnLike {
@@ -120,7 +121,7 @@ export function resolveFinalSource(
   advisory: AssistantAdvisoryResult | null
 ): AnswerSource {
   if (customerContext && customerContext.found === false) return 'not_found';
-  if (advisory && advisory.kind === 'missing_inputs') return 'clarification';
+  if (advisory && (advisory.kind === 'missing_inputs' || advisory.kind === 'below_minimum')) return 'clarification';
   return rawSource;
 }
 
@@ -220,6 +221,21 @@ export function buildAdvisoryResult(
     return { kind: 'missing_inputs', missing: inputs.missingRequired };
   }
 
+  // Bank-wide minimum (8,000 USD or currency equivalent — same rule and
+  // same FX table as the New Assessment form's validateLoanAmount) applies
+  // here too: never silently compute and recommend a term for an amount
+  // that could never actually be approved.
+  const minimumRequired = getMinimumLoanAmount(inputs.loanCurrency);
+  if (inputs.loanAmount < minimumRequired) {
+    return {
+      kind: 'below_minimum',
+      loanAmount: inputs.loanAmount,
+      loanAmountSource: inputs.loanAmountSource === 'query' ? 'query' : 'on_file',
+      loanCurrency: inputs.loanCurrency,
+      minimumRequired,
+    };
+  }
+
   const result = recommendInstallmentTerm({
     loanAmount: inputs.loanAmount,
     loanCurrency: inputs.loanCurrency,
@@ -305,6 +321,18 @@ export function formatAdvisorySummary(advisory: AssistantAdvisoryResult, languag
     return language === 'ar'
       ? `نسبة عبء الدين الحالية ${fmtPct(advisory.currentDebtBurdenRatio)} من حد ${fmtPct(advisory.dbrCap)}. الحد الأقصى لقسط شهري إضافي قبل تجاوز الحد هو ${fmtMoney(advisory.maxAdditionalMonthlyInstallment)}.`
       : `Current debt burden ratio is ${fmtPct(advisory.currentDebtBurdenRatio)} of the ${fmtPct(advisory.dbrCap)} cap. Maximum additional monthly installment before hitting that cap is ${fmtMoney(advisory.maxAdditionalMonthlyInstallment)}.`;
+  }
+
+  if (advisory.kind === 'below_minimum') {
+    const amountNote =
+      advisory.loanAmountSource === 'on_file'
+        ? language === 'ar'
+          ? ' (المسجل في الملف)'
+          : ' (on file)'
+        : '';
+    return language === 'ar'
+      ? `مبلغ القرض ${advisory.loanCurrency} ${fmtMoney(advisory.loanAmount)}${amountNote} أقل من الحد الأدنى المسموح به وهو ${advisory.loanCurrency} ${fmtMoney(advisory.minimumRequired)}. يرجى استخدام مبلغ أكبر.`
+      : `The loan amount of ${advisory.loanCurrency} ${fmtMoney(advisory.loanAmount)}${amountNote} is below the minimum allowed of ${advisory.loanCurrency} ${fmtMoney(advisory.minimumRequired)}. Please use a larger amount.`;
   }
 
   if (advisory.status === 'ok') {

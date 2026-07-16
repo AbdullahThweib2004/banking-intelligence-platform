@@ -59,6 +59,16 @@ import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
 import { LOAN_PRODUCTS, LOAN_PRODUCT_IDS, LOAN_CURRENCIES, type LoanProductId, type LoanCurrency } from '@/lib/loanProducts';
 import { explainIfSchemaCacheError } from '@/lib/schemaVerification';
+import {
+  validateName,
+  validateNationalId,
+  validateNonNegativeAmount,
+  validateLoanAmount,
+  validateLoanApplicantAge,
+  validateLoanTermYears,
+  validateObjectionFieldValue,
+  validateNotes,
+} from '@/lib/validation';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRiskInfoPopover } from '@/components/LoanRiskInfoPopover';
 import { useLatestBankCustomer } from '@/hooks/useLatestBankCustomer';
@@ -421,12 +431,21 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
-    if (!formData.customerName.trim() || !formData.loanAmount) {
-      toast.error(
-        language === 'ar'
-          ? 'يرجى إدخال اسم العميل ومبلغ القرض'
-          : 'Please enter the customer name and loan amount'
-      );
+    // --- Field-level validation (shared with the objection/modification flow
+    // and Open New Account — see src/lib/validation.ts for the single source
+    // of truth on every rule below). Each check surfaces its own precise,
+    // bilingual message rather than one generic "fill required fields" toast.
+    const nameCheck = validateName(formData.customerName, {
+      label: { en: 'Customer name', ar: 'اسم العميل' },
+    });
+    if (!nameCheck.valid) {
+      toast.error(language === 'ar' ? nameCheck.message!.ar : nameCheck.message!.en);
+      return;
+    }
+
+    const nationalIdCheck = validateNationalId(formData.nationalId, { required: false });
+    if (!nationalIdCheck.valid) {
+      toast.error(language === 'ar' ? nationalIdCheck.message!.ar : nationalIdCheck.message!.en);
       return;
     }
 
@@ -436,22 +455,16 @@ export const CreditRisk: React.FC = () => {
     }
 
     const clientAgeNum = Number(formData.clientAge);
-    if (!formData.clientAge || !Number.isFinite(clientAgeNum) || clientAgeNum < 18 || clientAgeNum > 100) {
-      toast.error(
-        language === 'ar'
-          ? 'يرجى إدخال عمر صحيح للعميل (18–100)'
-          : 'Please enter a valid client age (18–100)'
-      );
+    const ageCheck = validateLoanApplicantAge(clientAgeNum);
+    if (!formData.clientAge || !ageCheck.valid) {
+      toast.error(language === 'ar' ? ageCheck.message!.ar : ageCheck.message!.en);
       return;
     }
 
     const loanTermYearsNum = Number(formData.loanTermYears);
-    if (!formData.loanTermYears || !Number.isFinite(loanTermYearsNum) || loanTermYearsNum < 1 || loanTermYearsNum > 30) {
-      toast.error(
-        language === 'ar'
-          ? 'يرجى إدخال مدة قرض صحيحة بالسنوات (1–30)'
-          : 'Please enter a valid loan term in years (1–30)'
-      );
+    const termCheck = validateLoanTermYears(loanTermYearsNum);
+    if (!formData.loanTermYears || !termCheck.valid) {
+      toast.error(language === 'ar' ? termCheck.message!.ar : termCheck.message!.en);
       return;
     }
 
@@ -463,6 +476,25 @@ export const CreditRisk: React.FC = () => {
     const loanType = formData.loanType as LoanProductId;
     const loanCurrency = formData.loanCurrency as LoanCurrency;
     const salaryCurrency = formData.salaryCurrency as LoanCurrency;
+
+    for (const [value, label] of [
+      [income, { en: 'Monthly income', ar: 'الدخل الشهري' }],
+      [expenses, { en: 'Monthly expenses', ar: 'المصاريف الشهرية' }],
+      [existing, { en: 'Existing loans', ar: 'القروض الحالية' }],
+      [monthlyObligations, { en: 'Monthly obligations', ar: 'الالتزامات الشهرية' }],
+    ] as const) {
+      const amountCheck = validateNonNegativeAmount(value, label);
+      if (!amountCheck.valid) {
+        toast.error(language === 'ar' ? amountCheck.message!.ar : amountCheck.message!.en);
+        return;
+      }
+    }
+
+    const loanAmountCheck = validateLoanAmount(requestedLoanAmount, loanCurrency);
+    if (!loanAmountCheck.valid) {
+      toast.error(language === 'ar' ? loanAmountCheck.message!.ar : loanAmountCheck.message!.en);
+      return;
+    }
 
     setAssessmentSubmitting(true);
 
@@ -685,6 +717,26 @@ export const CreditRisk: React.FC = () => {
     }
     if (!objReason.trim()) {
       toast.error(language === 'ar' ? 'سبب التعديل مطلوب' : 'Reason for modification is required');
+      return;
+    }
+
+    const reasonCheck = validateNotes(objReason, {
+      required: true,
+      label: { en: 'Reason for modification', ar: 'سبب التعديل' },
+    });
+    if (!reasonCheck.valid) {
+      toast.error(language === 'ar' ? reasonCheck.message!.ar : reasonCheck.message!.en);
+      return;
+    }
+
+    // Validate the proposed new value the SAME way this field is validated
+    // when entered directly on the New Assessment form (e.g. a modification
+    // can't set monthly_income to a negative number just because it goes
+    // through this dialog instead of the main form).
+    const objLoanCurrency = (objRecord.row.loan_currency as LoanCurrency) || 'ILS';
+    const newValueCheck = validateObjectionFieldValue(objFieldName, objNewValue, objLoanCurrency);
+    if (!newValueCheck.valid) {
+      toast.error(language === 'ar' ? newValueCheck.message!.ar : newValueCheck.message!.en);
       return;
     }
 

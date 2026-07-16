@@ -95,6 +95,14 @@ export type AssistantAdvisoryResult =
       dbrCap: number;
       maxAdditionalMonthlyInstallment: number;
       currentlyOverCap: boolean;
+    }
+  | {
+      /** The requested/on-file loan amount is below the bank-wide minimum (8,000 USD or currency equivalent) — never silently computed against anyway. */
+      kind: 'below_minimum';
+      loanAmount: number;
+      loanAmountSource: 'query' | 'on_file';
+      loanCurrency: string;
+      minimumRequired: number;
     };
 
 const EDGE_FUNCTION = 'assistant-chat';

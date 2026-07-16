@@ -273,7 +273,10 @@ describe('chatAnswerComposition: buildAdvisoryResult', () => {
   });
 
   test('computes a real term recommendation when the on-file loan amount is available', () => {
-    const customer = makeCustomer({ loan_amount: 15000 });
+    // 35,000 ILS is comfortably above the ILS-equivalent minimum (28,800) —
+    // see the "rejects an on-file loan amount below the bank-wide minimum"
+    // test below for the below-minimum case.
+    const customer = makeCustomer({ loan_amount: 35000 });
     const result = buildAdvisoryResult(customer, 'What is the best installment term?', true);
     assert.equal(result.kind, 'term_recommendation');
     if (result.kind === 'term_recommendation' && result.status === 'ok') {
@@ -289,6 +292,46 @@ describe('chatAnswerComposition: buildAdvisoryResult', () => {
       assert.equal(result.loanAmount, 40000);
       assert.equal(result.loanAmountSource, 'query');
     }
+  });
+
+  test('rejects an on-file loan amount below the bank-wide minimum instead of computing a term for it', () => {
+    const customer = makeCustomer({ loan_amount: 2000 }); // well under the ILS-equivalent minimum
+    const result = buildAdvisoryResult(customer, 'What is the best installment term?', true);
+    assert.equal(result.kind, 'below_minimum');
+    if (result.kind === 'below_minimum') {
+      assert.equal(result.loanAmount, 2000);
+      assert.equal(result.loanAmountSource, 'on_file');
+      assert.ok(result.minimumRequired > 2000);
+    }
+  });
+
+  test('rejects a loan amount stated in the question when it is below the currency-equivalent minimum', () => {
+    const customer = makeCustomer({ loan_amount: 15000 });
+    const result = buildAdvisoryResult(customer, 'What term is best for a 3000 USD loan?', true);
+    assert.equal(result.kind, 'below_minimum');
+    if (result.kind === 'below_minimum') {
+      assert.equal(result.loanAmount, 3000);
+      assert.equal(result.loanAmountSource, 'query');
+    }
+  });
+
+  test('accepts a loan amount exactly at the minimum (boundary)', () => {
+    const customer = makeCustomer({ loan_amount: 8000 });
+    const result = buildAdvisoryResult(customer, 'What is the best installment term? Use USD.', true);
+    assert.notEqual(result.kind, 'below_minimum');
+  });
+});
+
+describe('chatAnswerComposition: resolveFinalSource + below_minimum', () => {
+  test('forces "clarification" when the advisory result is below_minimum', () => {
+    const belowMinimum = {
+      kind: 'below_minimum' as const,
+      loanAmount: 2000,
+      loanAmountSource: 'on_file' as const,
+      loanCurrency: 'ILS',
+      minimumRequired: 28800,
+    };
+    assert.equal(resolveFinalSource('database', null, belowMinimum), 'clarification');
   });
 });
 

@@ -60,6 +60,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
 import { findOrCreateBankCustomerFromAccountOpening, type BankCustomerRecord } from '@/lib/bankCustomers';
+import { validateName, validateNationalId, validateDateOfBirth } from '@/lib/validation';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
 import { HelpTarget } from '@/components/help';
@@ -397,11 +398,45 @@ export const Documents: React.FC = () => {
     }
   };
 
-  const isReviewValid =
-    accountForm.firstName.trim() !== '' &&
-    accountForm.lastName.trim() !== '' &&
-    accountForm.dateOfBirth.trim() !== '' &&
-    accountForm.idNumber.trim() !== '';
+  // Runs every review-step check and returns the FIRST failing message (or
+  // null when everything passes) — used both to gate the "Continue" button
+  // and to show the user exactly which field is wrong, instead of one
+  // generic "fill required fields" toast that doesn't say what's missing.
+  const getAccountReviewError = (): { en: string; ar: string } | null => {
+    const firstNameCheck = validateName(accountForm.firstName, {
+      label: { en: 'First name', ar: 'الاسم الأول' },
+    });
+    if (!firstNameCheck.valid) return firstNameCheck.message!;
+
+    const lastNameCheck = validateName(accountForm.lastName, {
+      label: { en: 'Last name', ar: 'اسم العائلة' },
+    });
+    if (!lastNameCheck.valid) return lastNameCheck.message!;
+
+    const dobCheck = validateDateOfBirth(accountForm.dateOfBirth);
+    if (!dobCheck.valid) return dobCheck.message!;
+
+    const idCheck = validateNationalId(accountForm.idNumber, { required: true });
+    if (!idCheck.valid) return idCheck.message!;
+
+    // Father's/mother's name are optional but still name-shaped fields —
+    // reuse the same 250-character cap for consistency.
+    const fatherNameCheck = validateName(accountForm.fatherName, {
+      required: false,
+      label: { en: "Father's name", ar: 'اسم الأب' },
+    });
+    if (!fatherNameCheck.valid) return fatherNameCheck.message!;
+
+    const motherNameCheck = validateName(accountForm.motherName, {
+      required: false,
+      label: { en: "Mother's name", ar: 'اسم الأم' },
+    });
+    if (!motherNameCheck.valid) return motherNameCheck.message!;
+
+    return null;
+  };
+
+  const isReviewValid = getAccountReviewError() === null;
 
   const customerFullName = `${accountForm.firstName} ${accountForm.lastName}`.trim();
 
@@ -415,12 +450,9 @@ export const Documents: React.FC = () => {
 
   const goToSignStep = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isReviewValid) {
-      toast.error(
-        language === 'ar'
-          ? 'يرجى تعبئة جميع الحقول المطلوبة'
-          : 'Please complete all required fields'
-      );
+    const reviewError = getAccountReviewError();
+    if (reviewError) {
+      toast.error(language === 'ar' ? reviewError.ar : reviewError.en);
       return;
     }
     setAccountStep(3);
@@ -1121,6 +1153,7 @@ export const Documents: React.FC = () => {
                         type="date"
                         value={accountForm.dateOfBirth}
                         onChange={(e) => handleAccountFieldChange('dateOfBirth', e.target.value)}
+                        max={new Date().toISOString().slice(0, 10)}
                       />
                     </div>
 

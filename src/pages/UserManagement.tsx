@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES, type Role } from '@/lib/roles';
+import { validateName, validateEmail } from '@/lib/validation';
 import { supabase } from '@/integrations/supabase/client';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HelpTarget } from '@/components/help';
@@ -226,12 +227,17 @@ export const UserManagement: React.FC = () => {
   }
 
   const handleAddUser = async () => {
-    if (!newUser.email.trim() || !newUser.fullName.trim()) {
-      toast.error(
-        language === 'ar'
-          ? 'الاسم والبريد الإلكتروني مطلوبان'
-          : 'Full name and email are required'
-      );
+    const nameCheck = validateName(newUser.fullName, {
+      label: { en: 'Full name', ar: 'الاسم الكامل' },
+    });
+    if (!nameCheck.valid) {
+      toast.error(language === 'ar' ? nameCheck.message!.ar : nameCheck.message!.en);
+      return;
+    }
+
+    const emailCheck = validateEmail(newUser.email);
+    if (!emailCheck.valid) {
+      toast.error(language === 'ar' ? emailCheck.message!.ar : emailCheck.message!.en);
       return;
     }
 
