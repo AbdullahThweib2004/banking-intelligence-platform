@@ -1,6 +1,6 @@
 # Document OCR API (FastAPI)
 
-Backend for the **Open New Account** wizard on the Documents page.
+Backend for the **Open New Account** wizard on the Documents page,
 
 ## Endpoints
 
