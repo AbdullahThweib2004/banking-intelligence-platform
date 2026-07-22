@@ -24,12 +24,12 @@
 //
 // Deploy:   supabase functions deploy assistant-chat
 // Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
-//           (optional) supabase secrets set ASSISTANT_MODEL=openai/gpt-4o-mini
+//           (optional) supabase secrets set ASSISTANT_MODEL=krea/krea-2-medium
 //           (optional) supabase secrets set ASSISTANT_MAX_TOKENS=600
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const ASSISTANT_MODEL = Deno.env.get("ASSISTANT_MODEL") ?? "openai/gpt-4o-mini";
+const ASSISTANT_MODEL = Deno.env.get("ASSISTANT_MODEL") ?? "krea/krea-2-medium";
 const MAX_TOKENS = Number(Deno.env.get("ASSISTANT_MAX_TOKENS") ?? "600");
 
 const corsHeaders = {

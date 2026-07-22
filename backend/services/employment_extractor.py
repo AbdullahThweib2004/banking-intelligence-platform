@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from services.field_parser import _normalize_date
 from services.llm_client import LlmCallError, call_llm_for_json, user_facing_error
 
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_MODEL = "krea/krea-2-medium"
 
 SYSTEM_PROMPT = """You extract structured employment/salary fields from noisy OCR text of an employment-proof document (payslip, salary certificate, or employer letter).
 Respond with ONLY one valid JSON object — no markdown, no code fences, no commentary.

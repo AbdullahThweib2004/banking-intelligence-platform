@@ -227,13 +227,3 @@ def _compute_confidence(fields: ParsedFields, ocr_confidence: float) -> float:
     return round(parse_score, 1)
 
 
-def merge_fields(primary: ParsedFields, secondary: ParsedFields, source: str) -> ParsedFields:
-    """Fill empty primary fields from secondary (e.g. LLM fallback)."""
-    for f in dataclass_fields(ParsedFields):
-        if f.name in ("confidence", "extraction_source"):
-            continue
-        if not getattr(primary, f.name) and getattr(secondary, f.name):
-            setattr(primary, f.name, getattr(secondary, f.name))
-    primary.extraction_source = source
-    primary.confidence = max(primary.confidence, secondary.confidence)
-    return primary

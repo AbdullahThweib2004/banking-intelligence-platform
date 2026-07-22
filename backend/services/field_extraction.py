@@ -1,4 +1,12 @@
-"""Orchestrate regex + optional LLM field extraction."""
+"""Regex/OCR field extraction for ID documents.
+
+Deliberately regex-only, no LLM fallback: a national ID card has a fixed,
+standard government layout, so the regex parser (services/field_parser.py)
+is expected to reliably extract every field from clean OCR text. Unlike
+employment-proof documents (which vary per employer and do need an LLM —
+see services/employment_extractor.py), spending an AI call per ID is
+unnecessary here.
+"""
 
 from __future__ import annotations
 
@@ -6,23 +14,13 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from services.field_parser import (
-    ParsedFields,
-    _compute_confidence,
-    _count_filled,
-    merge_fields,
-    parse_id_fields,
-)
-from services.llm_extractor import extract_fields_with_llm
+from services.field_parser import ParsedFields, _count_filled, parse_id_fields
 
 logger = logging.getLogger(__name__)
 
-# Trigger LLM when fewer than this many fields are filled by regex.
-LLM_FALLBACK_MIN_FIELDS = 4
-
 
 def detect_document_language(raw_text: str) -> str:
-    arabic_chars = sum(1 for c in raw_text if "\u0600" <= c <= "\u06FF")
+    arabic_chars = sum(1 for c in raw_text if "؀" <= c <= "ۿ")
     total_chars = len(re.findall(r"\S", raw_text))
     if total_chars == 0:
         return "en"
@@ -50,7 +48,8 @@ def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> Extraction
     regex_fields = parse_id_fields(raw_text, ocr_confidence=ocr_confidence)
     filled = _count_filled(regex_fields)
     logger.info(
-        "[field extraction] regex filled %d/6 fields | first=%s last=%s dob=%s id=%s conf=%.1f",
+        "[field extraction] extraction_source=regex (AI disabled for ID documents) | "
+        "filled %d/6 fields | first=%s last=%s dob=%s id=%s conf=%.1f",
         filled,
         regex_fields.first_name,
         regex_fields.last_name,
@@ -59,59 +58,10 @@ def extract_all_fields(raw_text: str, ocr_confidence: float = 0.0) -> Extraction
         regex_fields.confidence,
     )
 
-    if filled >= LLM_FALLBACK_MIN_FIELDS:
-        logger.info(
-            "[field extraction] extraction_source=regex | llm_skipped=yes | regex_fields=%d",
-            filled,
-        )
-        return ExtractionOutcome(
-            fields=regex_fields,
-            language=doc_language,
-            warnings=[],
-            llm_fallback_attempted=False,
-            regex_field_count=filled,
-        )
-
-    logger.info(
-        "[field extraction] regex below threshold (%d/%d) — attempting LLM fallback",
-        filled,
-        LLM_FALLBACK_MIN_FIELDS,
-    )
-    llm_fields, llm_error = extract_fields_with_llm(raw_text)
-    if llm_fields is None:
-        warnings: list[str] = []
-        if llm_error:
-            warnings.append(llm_error)
-            logger.warning(
-                "[field extraction] extraction_source=regex | llm_failed=yes | reason=%s",
-                llm_error,
-            )
-        else:
-            logger.warning(
-                "[field extraction] extraction_source=regex | llm_failed=yes | reason=unknown",
-            )
-        return ExtractionOutcome(
-            fields=regex_fields,
-            language=doc_language,
-            warnings=warnings,
-            llm_fallback_attempted=True,
-            regex_field_count=filled,
-        )
-
-    merged = merge_fields(regex_fields, llm_fields, source="regex+llm")
-    merged.confidence = _compute_confidence(merged, ocr_confidence)
-    merged_count = _count_filled(merged)
-    logger.info(
-        "[field extraction] extraction_source=regex+llm | llm_skipped=no | "
-        "regex_fields=%d merged_fields=%d conf=%.1f",
-        filled,
-        merged_count,
-        merged.confidence,
-    )
     return ExtractionOutcome(
-        fields=merged,
+        fields=regex_fields,
         language=doc_language,
         warnings=[],
-        llm_fallback_attempted=True,
+        llm_fallback_attempted=False,
         regex_field_count=filled,
     )

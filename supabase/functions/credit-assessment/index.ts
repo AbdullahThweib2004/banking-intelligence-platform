@@ -15,12 +15,12 @@
 //
 // Deploy:   supabase functions deploy credit-assessment
 // Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
-//           (optional) supabase secrets set CREDIT_MODEL=openai/gpt-4o-mini
+//           (optional) supabase secrets set CREDIT_MODEL=krea/krea-2-medium
 //           (optional) supabase secrets set CREDIT_MAX_TOKENS=350
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
+const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "krea/krea-2-medium";
 const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "350");
 
 const corsHeaders = {

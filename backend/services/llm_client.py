@@ -1,9 +1,10 @@
-"""Shared OpenRouter JSON-completion client used by all LLM-based field extractors.
+"""Shared OpenRouter JSON-completion client for LLM-based field extraction.
 
-Extracted from services/llm_extractor.py so the employment-proof extractor
-(services/employment_extractor.py) can reuse the same HTTP-calling and
-JSON-parsing plumbing instead of duplicating it — the prompt/schema differ
-per document type, but the OpenRouter request/response mechanics don't.
+Used by services/employment_extractor.py (ID-document extraction is
+regex/OCR-only — see services/field_extraction.py — and doesn't call this
+module at all). Kept separate from the extractor itself so the OpenRouter
+request/response plumbing isn't duplicated if another AI-based extractor is
+ever added.
 """
 
 from __future__ import annotations

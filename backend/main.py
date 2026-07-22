@@ -23,16 +23,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import accounts, documents
-from services.llm_extractor import llm_fallback_configured
+from services.llm_client import llm_configured
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
-if not llm_fallback_configured():
+# ID extraction is regex/OCR-only (no AI — see services/field_extraction.py),
+# so this only gates employment-proof extraction's AI step.
+if not llm_configured():
     logging.getLogger(__name__).warning(
-        "OPENROUTER_API_KEY is not set — LLM field-extraction fallback is disabled. "
+        "OPENROUTER_API_KEY is not set — AI-based employment-proof extraction is disabled. "
         "Set this in dev (.env), staging, and production host env / secrets."
     )
 
@@ -58,5 +60,5 @@ app.include_router(accounts.router)
 def health():
     return {
         "status": "ok",
-        "llm_fallback_configured": llm_fallback_configured(),
+        "llm_fallback_configured": llm_configured(),
     }
