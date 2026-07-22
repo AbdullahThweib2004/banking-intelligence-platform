@@ -164,6 +164,60 @@ export async function extractFields(
   );
 }
 
+export interface ExtractEmploymentProofResponse {
+  document_id: string;
+}
+
+/** Step 3 (Employment Proof) — upload the proof-of-employment file. */
+export async function extractEmploymentProof(
+  file: File,
+  authz: AccountAuthz
+): Promise<ExtractEmploymentProofResponse> {
+  assertCanOpenAccount(authz.role);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const data = await requestJson<ExtractEmploymentProofResponse>(
+    '/documents/extract-employment-proof',
+    {
+      method: 'POST',
+      headers: authHeaders(authz),
+      body: formData,
+    }
+  );
+
+  if (!data?.document_id) {
+    throw new Error('The server did not return a document id.');
+  }
+  return data;
+}
+
+export interface EmploymentExtractedFields {
+  document_id: string;
+  full_name?: string;
+  national_id?: string;
+  employer_name?: string;
+  job_title?: string;
+  monthly_salary?: number | null;
+  employment_status?: string;
+  issue_date?: string;
+  confidence?: number;
+  extraction_warnings?: string[];
+}
+
+/** Step 3 (Employment Proof) — run field extraction for the uploaded document. */
+export async function extractEmploymentFields(
+  documentId: string,
+  authz: AccountAuthz
+): Promise<EmploymentExtractedFields> {
+  assertCanOpenAccount(authz.role);
+  return requestJson<EmploymentExtractedFields>(
+    `/documents/${encodeURIComponent(documentId)}/extract-employment-fields`,
+    { method: 'POST', headers: authHeaders(authz) }
+  );
+}
+
 export interface OpenAccountPayload {
   document_id: string;
   first_name: string;

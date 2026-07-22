@@ -11,6 +11,9 @@ from typing import Literal
 Language = Literal["en", "ar", "mixed"]
 
 
+DocType = Literal["id", "employment_proof"]
+
+
 @dataclass
 class StoredDocument:
     document_id: str
@@ -18,6 +21,7 @@ class StoredDocument:
     raw_text: str
     language: Language
     ocr_confidence: float = 0.0
+    doc_type: DocType = "id"
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     pdf_bytes: bytes | None = None
     pdf_filename: str | None = None
@@ -31,6 +35,7 @@ def create_document(
     raw_text: str,
     language: Language,
     ocr_confidence: float = 0.0,
+    doc_type: DocType = "id",
 ) -> StoredDocument:
     doc_id = f"doc_{uuid.uuid4().hex[:12]}"
     doc = StoredDocument(
@@ -39,6 +44,7 @@ def create_document(
         raw_text=raw_text,
         language=language,
         ocr_confidence=ocr_confidence,
+        doc_type=doc_type,
     )
     _documents[doc_id] = doc
     return doc

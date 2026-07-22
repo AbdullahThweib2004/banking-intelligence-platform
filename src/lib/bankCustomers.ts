@@ -8,7 +8,9 @@
  * `public.bank_customers` and lets the database assign the account number.
  */
 import { supabase } from '@/integrations/supabase/client';
-import { generateDefaultCustomerFinancialProfile } from '@/lib/accountOpeningDefaults';
+import { resolveEmploymentMatch, type EmploymentMatchOutcome } from '@/lib/employmentMatch';
+
+export type { EmploymentMatchOutcome } from '@/lib/employmentMatch';
 
 export interface BankCustomerRecord {
   id: string;
@@ -23,13 +25,61 @@ export interface BankCustomerRecord {
   loan_purpose: string;
   loan_restricted: boolean;
   restriction_reason: string | null;
+  /** Provenance of the financial-profile fields above — see ResolvedFinancialProfile. */
+  financial_profile_source: string;
   created_at: string;
 }
+
+/**
+ * Where a customer's financial-profile fields (income, expenses, existing
+ * debt, employment, loan amount/purpose) actually came from. Replaces the
+ * old always-random `generateDefaultCustomerFinancialProfile()` — every new
+ * `bank_customers` row must now carry an honest source instead of silently
+ * invented numbers.
+ */
+export type FinancialProfileSource =
+  | 'database_match'
+  | 'employment_proof_extracted'
+  | 'manual_entry'
+  | 'unresolved_needs_review';
+
+export interface ResolvedFinancialProfile {
+  monthlyIncome: number;
+  monthlyExpenses: number;
+  existingLoans: number;
+  employmentType: string;
+  loanAmount: number;
+  loanPurpose: string;
+  source: FinancialProfileSource;
+}
+
+/**
+ * The only fallback used when no real financial data could be resolved
+ * (no database match, no usable employment-proof extraction, and staff did
+ * not manually enter values). Uses the same NOT-NULL-column defaults the
+ * database itself would use (0 / 'unknown') rather than a plausible-looking
+ * random number, and is explicitly flagged via `source` so downstream
+ * consumers (Credit Risk scoring, the chat assistant, reporting) never
+ * mistake "unknown" for "verified zero income" — 'unknown' is the same
+ * sentinel already used elsewhere in this codebase for unset
+ * employment_type/loan_purpose (see src/lib/creditScoring.ts).
+ */
+export const UNRESOLVED_FINANCIAL_PROFILE: ResolvedFinancialProfile = {
+  monthlyIncome: 0,
+  monthlyExpenses: 0,
+  existingLoans: 0,
+  employmentType: 'unknown',
+  loanAmount: 0,
+  loanPurpose: 'unknown',
+  source: 'unresolved_needs_review',
+};
 
 export interface NewAccountOpeningInput {
   /** OCR/wizard-confirmed identity fields — real customer data. */
   customerName: string;
   nationalId: string;
+  /** Resolved during the Employment Proof step — never randomly generated. */
+  financialProfile: ResolvedFinancialProfile;
 }
 
 export interface FindOrCreateBankCustomerResult {
@@ -66,16 +116,18 @@ export async function findBankCustomerByNationalId(
  * BOP-1NNNNN numbers under concurrent inserts — this function must never
  * compute or guess the number itself.
  *
- * Fields not available from ID OCR (income, expenses, existing debt,
- * employment, loan purpose/amount) are filled with the clearly-labeled
- * TEMPORARY random defaults from `generateDefaultCustomerFinancialProfile()`.
+ * Financial-profile fields (income, expenses, existing debt, employment,
+ * loan purpose/amount) come from the caller's resolved `financialProfile` —
+ * real data retrieved during the Employment Proof step, or the explicit
+ * `UNRESOLVED_FINANCIAL_PROFILE` sentinel when no reliable source was
+ * found. This function never generates or guesses these values itself.
  */
 async function insertBankCustomer(input: {
   customerName: string;
   nationalId: string;
+  financialProfile: ResolvedFinancialProfile;
 }): Promise<BankCustomerRecord> {
-  // Temporary generated defaults — NOT from OCR. See accountOpeningDefaults.ts.
-  const defaults = generateDefaultCustomerFinancialProfile();
+  const profile = input.financialProfile;
 
   const { data, error } = await supabase
     .from('bank_customers')
@@ -83,12 +135,13 @@ async function insertBankCustomer(input: {
       // account_number omitted on purpose — the DB trigger generates it.
       customer_name: input.customerName,
       national_id: input.nationalId,
-      monthly_income: defaults.monthlyIncome,
-      monthly_expenses: defaults.monthlyExpenses,
-      existing_loans: defaults.existingLoans,
-      employment_type: defaults.employmentType,
-      loan_amount: defaults.loanAmount,
-      loan_purpose: defaults.loanPurpose,
+      monthly_income: profile.monthlyIncome,
+      monthly_expenses: profile.monthlyExpenses,
+      existing_loans: profile.existingLoans,
+      employment_type: profile.employmentType,
+      loan_amount: profile.loanAmount,
+      loan_purpose: profile.loanPurpose,
+      financial_profile_source: profile.source,
     })
     .select('*')
     .single();
@@ -100,6 +153,63 @@ async function insertBankCustomer(input: {
     throw error; // re-thrown so the national_id race case can be handled by the caller
   }
 
+  return data as BankCustomerRecord;
+}
+
+/**
+ * financial_profile_source values that mean "nothing real was ever
+ * confirmed" — either a legacy row (created before this table tracked
+ * provenance, including the old random-default generator) or a row that was
+ * explicitly left unresolved. Only these are ever eligible to be refreshed
+ * by refreshStaleFinancialProfile(); anything else is treated as already
+ * real/verified data and is never silently overwritten.
+ */
+const STALE_FINANCIAL_SOURCES = new Set<string>(['unknown', 'unresolved_needs_review']);
+
+/**
+ * When the wizard is reopened on an already-existing customer (same
+ * national_id), this upgrades a stale/never-resolved financial profile with
+ * newly resolved real data from this run's Employment Proof step — without
+ * this, a legacy row's old fake numbers (e.g. from the pre-this-feature
+ * random-default generator) would be returned and silently reused forever,
+ * even after the customer's real employment proof / a real database match
+ * has since become available.
+ *
+ * Deliberately conservative: only upgrades when the EXISTING row is stale
+ * AND the NEW profile is actually resolved — an already-real profile
+ * (database_match / employment_proof_extracted / manual_entry) is never
+ * downgraded or overwritten, and a still-unresolved new attempt never wipes
+ * out a row that already has real data.
+ */
+async function refreshStaleFinancialProfile(
+  existing: BankCustomerRecord,
+  newProfile: ResolvedFinancialProfile
+): Promise<BankCustomerRecord> {
+  const existingIsStale = STALE_FINANCIAL_SOURCES.has(existing.financial_profile_source);
+  const newIsResolved = newProfile.source !== 'unresolved_needs_review';
+  if (!existingIsStale || !newIsResolved) {
+    return existing;
+  }
+
+  const { data, error } = await supabase
+    .from('bank_customers')
+    .update({
+      monthly_income: newProfile.monthlyIncome,
+      monthly_expenses: newProfile.monthlyExpenses,
+      existing_loans: newProfile.existingLoans,
+      employment_type: newProfile.employmentType,
+      loan_amount: newProfile.loanAmount,
+      loan_purpose: newProfile.loanPurpose,
+      financial_profile_source: newProfile.source,
+    })
+    .eq('id', existing.id)
+    .select('*')
+    .single();
+
+  if (error) {
+    console.warn('Failed to refresh a stale financial profile — keeping the existing row as-is:', error.message);
+    return existing;
+  }
   return data as BankCustomerRecord;
 }
 
@@ -126,12 +236,17 @@ export async function findOrCreateBankCustomerFromAccountOpening(
   // 1. Check first — the common, non-racy path for a deliberate retry.
   const existing = await findBankCustomerByNationalId(nationalId);
   if (existing) {
-    return { customer: existing, accountNumber: existing.account_number, wasCreated: false };
+    const refreshed = await refreshStaleFinancialProfile(existing, input.financialProfile);
+    return { customer: refreshed, accountNumber: refreshed.account_number, wasCreated: false };
   }
 
   // 2. Not found — try to create it.
   try {
-    const created = await insertBankCustomer({ customerName, nationalId });
+    const created = await insertBankCustomer({
+      customerName,
+      nationalId,
+      financialProfile: input.financialProfile,
+    });
     return { customer: created, accountNumber: created.account_number, wasCreated: true };
   } catch (err) {
     const pgError = err as { code?: string; message?: string };
@@ -148,6 +263,39 @@ export async function findOrCreateBankCustomerFromAccountOpening(
       (err as Error)?.message || 'Failed to create or find the customer record.'
     );
   }
+}
+
+/** Looks up existing customers by exact (case-insensitive) full name. Never a fuzzy/partial match. */
+async function findBankCustomersByName(fullName: string): Promise<BankCustomerRecord[]> {
+  const trimmed = fullName.trim();
+  if (!trimmed) return [];
+
+  const { data, error } = await supabase
+    .from('bank_customers')
+    .select('*')
+    .ilike('customer_name', trimmed);
+
+  if (error) {
+    throw new Error(error.message || 'Failed to search for a matching customer by name.');
+  }
+  return (data as BankCustomerRecord[] | null) ?? [];
+}
+
+/**
+ * Used by the Employment Proof step to retrieve a customer's REAL financial
+ * profile instead of inventing one. Tries an exact national_id match first
+ * (the only outcome ever auto-applied); falls back to a name-only search
+ * whose result is surfaced for staff confirmation, never auto-applied — see
+ * employmentMatch.ts for the full reasoning behind this split.
+ */
+export async function matchCustomerFinancialRecord(input: {
+  nationalId: string;
+  fullName: string;
+}): Promise<EmploymentMatchOutcome> {
+  const nationalId = input.nationalId.trim();
+  const nationalIdMatch = nationalId ? await findBankCustomerByNationalId(nationalId) : null;
+  const nameMatches = nationalIdMatch ? [] : await findBankCustomersByName(input.fullName);
+  return resolveEmploymentMatch(nationalIdMatch, nameMatches);
 }
 
 /** Most recently created customer — used to surface a "latest account number" hint. */

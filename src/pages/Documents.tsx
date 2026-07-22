@@ -52,14 +52,37 @@ import {
   ScanLine,
   Printer,
   UserCheck,
+  Briefcase,
+  Database,
+  Users,
+  HelpCircle,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { extractId, extractFields, generateAccountForm, openNewAccount, fetchDocumentPdf } from '@/lib/accountApi';
-import { findOrCreateBankCustomerFromAccountOpening, type BankCustomerRecord } from '@/lib/bankCustomers';
+import {
+  extractId,
+  extractFields,
+  extractEmploymentProof,
+  extractEmploymentFields,
+  generateAccountForm,
+  openNewAccount,
+  fetchDocumentPdf,
+  type EmploymentExtractedFields,
+} from '@/lib/accountApi';
+import {
+  findOrCreateBankCustomerFromAccountOpening,
+  matchCustomerFinancialRecord,
+  UNRESOLVED_FINANCIAL_PROFILE,
+  type BankCustomerRecord,
+  type ResolvedFinancialProfile,
+  type FinancialProfileSource,
+  type EmploymentMatchOutcome,
+} from '@/lib/bankCustomers';
+import { isSalaryMismatch } from '@/lib/employmentMatch';
 import { validateName, validateNationalId, validateDateOfBirth } from '@/lib/validation';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
@@ -223,6 +246,24 @@ export const Documents: React.FC = () => {
   const [accountSubmitted, setAccountSubmitted] = useState(false);
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
+
+  // Step 3 — Employment Proof Upload (retrieves REAL financial data instead
+  // of the old random-default generator; see bankCustomers.ts).
+  const [employmentFile, setEmploymentFile] = useState<File | null>(null);
+  const [employmentDragging, setEmploymentDragging] = useState(false);
+  const [employmentExtracting, setEmploymentExtracting] = useState(false);
+  const [employmentExtractError, setEmploymentExtractError] = useState<string | null>(null);
+  const [employmentDocumentId, setEmploymentDocumentId] = useState('');
+  const [employmentFields, setEmploymentFields] = useState<EmploymentExtractedFields | null>(null);
+  const [employmentWarnings, setEmploymentWarnings] = useState<string[]>([]);
+  const [matching, setMatching] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const [matchOutcome, setMatchOutcome] = useState<EmploymentMatchOutcome | null>(null);
+  const [financialProfile, setFinancialProfile] = useState<ResolvedFinancialProfile>(
+    UNRESOLVED_FINANCIAL_PROFILE
+  );
+  const [unresolvedAcknowledged, setUnresolvedAcknowledged] = useState(false);
+
   const [newCustomerRecord, setNewCustomerRecord] = useState<BankCustomerRecord | null>(null);
   const [customerWasNew, setCustomerWasNew] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -264,6 +305,18 @@ export const Documents: React.FC = () => {
     setAccountSubmitted(false);
     setReferenceId('');
     setDocumentId('');
+    setEmploymentFile(null);
+    setEmploymentDragging(false);
+    setEmploymentExtracting(false);
+    setEmploymentExtractError(null);
+    setEmploymentDocumentId('');
+    setEmploymentFields(null);
+    setEmploymentWarnings([]);
+    setMatching(false);
+    setMatchError(null);
+    setMatchOutcome(null);
+    setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+    setUnresolvedAcknowledged(false);
     setNewCustomerRecord(null);
     setCustomerWasNew(true);
     setSubmitting(false);
@@ -398,6 +451,180 @@ export const Documents: React.FC = () => {
     }
   };
 
+  const customerFullName = `${accountForm.firstName} ${accountForm.lastName}`.trim();
+
+  const isValidEmploymentFile = (file: File) =>
+    ['image/jpeg', 'image/png', 'application/pdf'].includes(file.type) ||
+    /\.(jpe?g|png|pdf)$/i.test(file.name);
+
+  const handleEmploymentFiles = (files: File[]) => {
+    const file = files[0];
+    if (!file) return;
+    if (!isValidEmploymentFile(file)) {
+      toast.error(
+        language === 'ar'
+          ? 'يُسمح فقط بملفات JPG أو PNG أو PDF'
+          : 'Only JPG, PNG, or PDF files are allowed'
+      );
+      return;
+    }
+    setEmploymentExtractError(null);
+    setEmploymentFile(file);
+  };
+
+  const handleEmploymentDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setEmploymentDragging(true);
+  };
+
+  const handleEmploymentDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setEmploymentDragging(false);
+  };
+
+  const handleEmploymentDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setEmploymentDragging(false);
+    handleEmploymentFiles(Array.from(e.dataTransfer.files));
+  };
+
+  const handleEmploymentInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleEmploymentFiles(e.target.files ? Array.from(e.target.files) : []);
+  };
+
+  /**
+   * Applies a bank_customers row as the resolved financial profile — the
+   * ONLY path that ever fills real income/expenses/existing-loans/loan
+   * numbers, since it always comes from an actual database row (an exact
+   * national_id match, or a name-only candidate the staff explicitly chose).
+   */
+  const applyDatabaseMatch = (customer: BankCustomerRecord) => {
+    setFinancialProfile({
+      monthlyIncome: customer.monthly_income,
+      monthlyExpenses: customer.monthly_expenses,
+      existingLoans: customer.existing_loans,
+      employmentType: customer.employment_type,
+      loanAmount: customer.loan_amount,
+      loanPurpose: customer.loan_purpose,
+      source: 'database_match',
+    });
+    setUnresolvedAcknowledged(false);
+  };
+
+  /**
+   * Fallback used only when no database match exists at all — uses the
+   * salary/employment-status actually printed on the employment-proof
+   * document itself (real, customer-provided data) rather than a random
+   * placeholder. Expenses/existing-loans/loan-amount/purpose have no
+   * equivalent on a payslip, so they stay at 0/'unknown', same as the
+   * database's own NOT-NULL defaults — never guessed.
+   */
+  const applyExtractedEmploymentData = () => {
+    if (!employmentFields) return;
+    setFinancialProfile({
+      monthlyIncome: employmentFields.monthly_salary ?? 0,
+      monthlyExpenses: 0,
+      existingLoans: 0,
+      employmentType: employmentFields.employment_status?.trim() || 'unknown',
+      loanAmount: 0,
+      loanPurpose: 'unknown',
+      source: 'employment_proof_extracted',
+    });
+    setUnresolvedAcknowledged(false);
+  };
+
+  const markFinancialProfileUnresolved = () => {
+    setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+  };
+
+  /**
+   * Looks up a real financial record using the ID-step's national ID (exact,
+   * safe match) and full name (name-only fallback, never auto-applied — see
+   * employmentMatch.ts). Runs automatically on entering Step 3, independent
+   * of whether an employment-proof file has been uploaded/extracted yet,
+   * since the identifiers it needs come entirely from Step 1.
+   */
+  const runCustomerMatch = useCallback(async () => {
+    if (matching) return;
+    setMatching(true);
+    setMatchError(null);
+    try {
+      const outcome = await matchCustomerFinancialRecord({
+        nationalId: accountForm.idNumber,
+        fullName: customerFullName,
+      });
+      setMatchOutcome(outcome);
+      if (outcome.kind === 'matched') {
+        applyDatabaseMatch(outcome.customer);
+      } else {
+        setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+      }
+    } catch (err) {
+      setMatchError(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر البحث عن سجل عميل مطابق.'
+            : 'Could not search for a matching customer record.'
+      );
+      setMatchOutcome(null);
+      setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+    } finally {
+      setMatching(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountForm.idNumber, customerFullName, language]);
+
+  const handleExtractEmployment = async () => {
+    if (!employmentFile || employmentExtracting) return;
+    setEmploymentExtractError(null);
+    setEmploymentExtracting(true);
+
+    try {
+      const { document_id } = await extractEmploymentProof(employmentFile, authz);
+      setEmploymentDocumentId(document_id);
+      await writeAccountAudit(
+        'account_opening_employment_upload',
+        document_id,
+        `Uploaded employment proof: ${employmentFile.name}`
+      );
+
+      const fields = await extractEmploymentFields(document_id, authz);
+      setEmploymentFields(fields);
+      setEmploymentWarnings(
+        Array.isArray(fields.extraction_warnings)
+          ? fields.extraction_warnings.filter((w): w is string => typeof w === 'string' && w.trim() !== '')
+          : []
+      );
+
+      await writeAccountAudit(
+        'account_opening_employment_extract',
+        document_id,
+        `Extracted employment fields (employer=${fields.employer_name || 'n/a'}, confidence ${fields.confidence ?? 0}%)`
+      );
+    } catch (err) {
+      setEmploymentExtractError(
+        err instanceof Error && err.message
+          ? err.message
+          : language === 'ar'
+            ? 'تعذّر قراءة مستند إثبات العمل بوضوح. يرجى رفع صورة أوضح.'
+            : 'Could not read the employment proof clearly. Please upload a clearer photo or scan.'
+      );
+    } finally {
+      setEmploymentExtracting(false);
+    }
+  };
+
+  const employmentHasUsableExtractedData =
+    !!employmentFields &&
+    (employmentFields.monthly_salary != null ||
+      !!employmentFields.employer_name?.trim() ||
+      !!employmentFields.employment_status?.trim());
+
+  const salaryMismatchDetected =
+    matchOutcome?.kind === 'matched' &&
+    isSalaryMismatch(employmentFields?.monthly_salary ?? null, matchOutcome.customer.monthly_income);
+
   // Runs every review-step check and returns the FIRST failing message (or
   // null when everything passes) — used both to gate the "Continue" button
   // and to show the user exactly which field is wrong, instead of one
@@ -438,8 +665,6 @@ export const Documents: React.FC = () => {
 
   const isReviewValid = getAccountReviewError() === null;
 
-  const customerFullName = `${accountForm.firstName} ${accountForm.lastName}`.trim();
-
   const autoFilledBadge = (field: string) =>
     autoFilledFields.includes(field) ? (
       <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
@@ -448,7 +673,49 @@ export const Documents: React.FC = () => {
       </Badge>
     ) : null;
 
-  const goToSignStep = (e: React.FormEvent) => {
+  // Phase 6 source badges — lets the final review show exactly where each
+  // financial value came from (database match, the employment proof itself,
+  // manual entry, or "needs review" when nothing reliable was found).
+  const financialSourceBadge = (source: FinancialProfileSource) => {
+    switch (source) {
+      case 'database_match':
+        return (
+          <Badge className="bg-success/10 text-success border-success/20 text-xs gap-1">
+            <Database className="h-3 w-3" />
+            {language === 'ar' ? 'من قاعدة البيانات' : 'From Database'}
+          </Badge>
+        );
+      case 'employment_proof_extracted':
+        return (
+          <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
+            <Briefcase className="h-3 w-3" />
+            {language === 'ar' ? 'من إثبات العمل' : 'From Employment Proof'}
+          </Badge>
+        );
+      case 'manual_entry':
+        return (
+          <Badge className="bg-muted text-muted-foreground border-border text-xs gap-1">
+            {language === 'ar' ? 'إدخال يدوي' : 'Manual Entry'}
+          </Badge>
+        );
+      case 'unresolved_needs_review':
+      default:
+        return (
+          <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
+            <HelpCircle className="h-3 w-3" />
+            {language === 'ar' ? 'يتطلب مراجعة' : 'Needs Review'}
+          </Badge>
+        );
+    }
+  };
+
+  const idSourceBadge = () => (
+    <Badge className="bg-muted text-muted-foreground border-border text-xs gap-1">
+      {language === 'ar' ? 'من الهوية' : 'From ID'}
+    </Badge>
+  );
+
+  const goToEmploymentStep = (e: React.FormEvent) => {
     e.preventDefault();
     const reviewError = getAccountReviewError();
     if (reviewError) {
@@ -456,6 +723,46 @@ export const Documents: React.FC = () => {
       return;
     }
     setAccountStep(3);
+    void runCustomerMatch();
+  };
+
+  // Gates the Employment Proof step's "Continue" button — mirrors
+  // getAccountReviewError's "first failing check wins" pattern.
+  const getEmploymentStepError = (): { en: string; ar: string } | null => {
+    if (!employmentFile && !employmentDocumentId) {
+      return {
+        en: 'Please upload proof of employment before continuing.',
+        ar: 'يرجى رفع إثبات العمل قبل المتابعة.',
+      };
+    }
+    if (
+      matchOutcome &&
+      (matchOutcome.kind === 'possible_match' || matchOutcome.kind === 'ambiguous') &&
+      financialProfile.source !== 'database_match'
+    ) {
+      return {
+        en: 'Please confirm a matching customer record, or choose to continue without one.',
+        ar: 'يرجى تأكيد سجل عميل مطابق، أو اختيار المتابعة دون سجل.',
+      };
+    }
+    if (financialProfile.source === 'unresolved_needs_review' && !unresolvedAcknowledged) {
+      return {
+        en: 'Please acknowledge that this financial profile requires manual follow-up review before continuing.',
+        ar: 'يرجى الإقرار بأن هذا الملف المالي يتطلب مراجعة يدوية لاحقة قبل المتابعة.',
+      };
+    }
+    return null;
+  };
+
+  const isEmploymentStepValid = getEmploymentStepError() === null;
+
+  const goToSignStep = () => {
+    const stepError = getEmploymentStepError();
+    if (stepError) {
+      toast.error(language === 'ar' ? stepError.ar : stepError.en);
+      return;
+    }
+    setAccountStep(4);
   };
 
   const handleGenerateForm = async () => {
@@ -552,7 +859,7 @@ export const Documents: React.FC = () => {
       );
       return;
     }
-    setAccountStep(4);
+    setAccountStep(5);
   };
 
   const handleCompleteProcess = async () => {
@@ -598,6 +905,7 @@ export const Documents: React.FC = () => {
       const { customer: customerRecord, wasCreated } = await findOrCreateBankCustomerFromAccountOpening({
         customerName: customerFullName || accountForm.idNumber.trim(),
         nationalId: accountForm.idNumber.trim(),
+        financialProfile,
       });
       setNewCustomerRecord(customerRecord);
       setCustomerWasNew(wasCreated);
@@ -772,19 +1080,41 @@ export const Documents: React.FC = () => {
   };
 
   const summaryRows = [
-    { label: language === 'ar' ? 'الاسم الأول' : 'First Name', value: accountForm.firstName },
-    { label: language === 'ar' ? 'اسم العائلة' : 'Last Name', value: accountForm.lastName },
-    { label: language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth', value: accountForm.dateOfBirth },
-    { label: language === 'ar' ? 'رقم الهوية' : 'ID Number', value: accountForm.idNumber },
+    { label: language === 'ar' ? 'الاسم الأول' : 'First Name', value: accountForm.firstName, source: 'id' as const },
+    { label: language === 'ar' ? 'اسم العائلة' : 'Last Name', value: accountForm.lastName, source: 'id' as const },
+    { label: language === 'ar' ? 'تاريخ الميلاد' : 'Date of Birth', value: accountForm.dateOfBirth, source: 'id' as const },
+    { label: language === 'ar' ? 'رقم الهوية' : 'ID Number', value: accountForm.idNumber, source: 'id' as const },
     {
       label: language === 'ar' ? 'اسم الأب (اختياري)' : "Father's Name (optional)",
       value: accountForm.fatherName,
       optional: true,
+      source: 'id' as const,
     },
     {
       label: language === 'ar' ? 'اسم الأم (اختياري)' : "Mother's Name (optional)",
       value: accountForm.motherName,
       optional: true,
+      source: 'id' as const,
+    },
+    {
+      label: language === 'ar' ? 'الدخل الشهري' : 'Monthly Income',
+      value: financialProfile.monthlyIncome.toLocaleString(),
+      source: financialProfile.source,
+    },
+    {
+      label: language === 'ar' ? 'المصاريف الشهرية' : 'Monthly Expenses',
+      value: financialProfile.monthlyExpenses.toLocaleString(),
+      source: financialProfile.source,
+    },
+    {
+      label: language === 'ar' ? 'القروض الحالية' : 'Existing Loans',
+      value: financialProfile.existingLoans.toLocaleString(),
+      source: financialProfile.source,
+    },
+    {
+      label: language === 'ar' ? 'نوع التوظيف' : 'Employment Type',
+      value: financialProfile.employmentType,
+      source: financialProfile.source,
     },
   ];
 
@@ -921,8 +1251,9 @@ export const Documents: React.FC = () => {
                 {[
                   { n: 1, label: language === 'ar' ? 'رفع الهوية' : 'Upload ID' },
                   { n: 2, label: language === 'ar' ? 'مراجعة البيانات' : 'Review Data' },
-                  { n: 3, label: language === 'ar' ? 'توقيع وإنشاء النموذج' : 'Sign & Generate Form' },
-                  { n: 4, label: language === 'ar' ? 'اكتمال' : 'Complete' },
+                  { n: 3, label: language === 'ar' ? 'إثبات العمل' : 'Employment Proof' },
+                  { n: 4, label: language === 'ar' ? 'توقيع وإنشاء النموذج' : 'Sign & Generate Form' },
+                  { n: 5, label: language === 'ar' ? 'اكتمال' : 'Complete' },
                 ].map((s, i, arr) => (
                   <React.Fragment key={s.n}>
                     <div className="flex flex-col items-center gap-1.5">
@@ -1108,7 +1439,7 @@ export const Documents: React.FC = () => {
 
                   <form
                     id="review-account-form"
-                    onSubmit={goToSignStep}
+                    onSubmit={goToEmploymentStep}
                     className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                   >
                     <div className="space-y-2">
@@ -1211,8 +1542,314 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 3: Sign & Print */}
+              {/* Step 3: Employment Proof Upload — retrieves REAL financial
+                  data from the database (or, failing that, from the proof
+                  itself) instead of the old random-default generator. */}
               {accountStep === 3 && (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'ar'
+                      ? 'ارفع إثبات عمل (كشف راتب، شهادة راتب، أو خطاب من جهة العمل) لاسترجاع البيانات المالية الحقيقية لهذا العميل.'
+                      : 'Upload proof of employment (payslip, salary certificate, or employer letter) to retrieve this customer\'s real financial data.'}
+                  </p>
+
+                  {employmentExtracting ? (
+                    <div className="border-2 border-dashed border-border rounded-xl p-8 flex flex-col items-center gap-4 text-center">
+                      <Loader2 className="h-12 w-12 text-primary animate-spin" />
+                      <p className="text-muted-foreground">
+                        {language === 'ar'
+                          ? 'جارٍ استخراج بيانات العمل...'
+                          : 'Extracting employment data...'}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className={cn(
+                          'border-2 border-dashed rounded-xl p-8 text-center transition-all',
+                          employmentDragging
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:border-primary/50'
+                        )}
+                        onDragOver={handleEmploymentDragOver}
+                        onDragLeave={handleEmploymentDragLeave}
+                        onDrop={handleEmploymentDrop}
+                      >
+                        {employmentFile ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <Briefcase className="h-12 w-12 text-primary" />
+                            <p className="font-medium break-all max-w-[280px]">{employmentFile.name}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEmploymentFile(null);
+                                setEmploymentExtractError(null);
+                              }}
+                            >
+                              {language === 'ar' ? 'إزالة الملف' : 'Remove file'}
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold mb-2">
+                              {language === 'ar'
+                                ? 'اسحب وأفلت إثبات العمل هنا'
+                                : 'Drag and drop the proof of employment here'}
+                            </h3>
+                            <p className="text-muted-foreground mb-4">
+                              {language === 'ar'
+                                ? 'أو اضغط لاختيار ملف (JPG، PNG، PDF)'
+                                : 'or click to browse (JPG, PNG, PDF)'}
+                            </p>
+                            <input
+                              type="file"
+                              id="employment-upload"
+                              className="hidden"
+                              accept=".jpg,.jpeg,.png,.pdf"
+                              onChange={handleEmploymentInput}
+                            />
+                            <label htmlFor="employment-upload">
+                              <Button asChild className="gradient-bg">
+                                <span>{language === 'ar' ? 'اختيار ملف' : 'Choose File'}</span>
+                              </Button>
+                            </label>
+                          </>
+                        )}
+                      </div>
+
+                      {employmentExtractError && (
+                        <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                          <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-sm text-destructive">{employmentExtractError}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
+                              onClick={handleExtractEmployment}
+                            >
+                              {language === 'ar' ? 'حاول مرة أخرى' : 'Try Again'}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {employmentWarnings.length > 0 && (
+                    <Alert variant="destructive" className="border-warning/50 bg-warning/10 text-foreground">
+                      <AlertTriangle className="h-4 w-4 text-warning" />
+                      <AlertTitle>
+                        {language === 'ar' ? 'تعذّر استخراج بيانات العمل تلقائيًا' : 'Employment data could not be auto-extracted'}
+                      </AlertTitle>
+                      <AlertDescription className="space-y-1">
+                        {employmentWarnings.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {employmentFields && employmentHasUsableExtractedData && (
+                    <div className="rounded-lg border border-border p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <Briefcase className="h-4 w-4 text-info" />
+                        {language === 'ar' ? 'مُستخرج من إثبات العمل' : 'Extracted from Employment Proof'}
+                        <Badge className="bg-info/10 text-info border-info/20 text-xs">
+                          {language === 'ar' ? 'من إثبات العمل' : 'From Employment Proof'}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">{language === 'ar' ? 'جهة العمل: ' : 'Employer: '}</span>
+                          <span className="font-medium">{employmentFields.employer_name || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">{language === 'ar' ? 'المسمى الوظيفي: ' : 'Job title: '}</span>
+                          <span className="font-medium">{employmentFields.job_title || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">{language === 'ar' ? 'الراتب الشهري: ' : 'Monthly salary: '}</span>
+                          <span className="font-medium">
+                            {employmentFields.monthly_salary != null ? employmentFields.monthly_salary.toLocaleString() : '—'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">{language === 'ar' ? 'حالة التوظيف: ' : 'Employment status: '}</span>
+                          <span className="font-medium">{employmentFields.employment_status || '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {matching && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {language === 'ar' ? 'جارٍ البحث عن سجل مالي مطابق...' : 'Checking for an existing financial record...'}
+                    </div>
+                  )}
+
+                  {matchError && (
+                    <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                      <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm text-destructive">{matchError}</p>
+                        <Button variant="outline" size="sm" className="mt-2" onClick={() => void runCustomerMatch()}>
+                          {language === 'ar' ? 'حاول مرة أخرى' : 'Try Again'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {matchOutcome?.kind === 'matched' && (
+                    <Alert className="border-success/40 bg-success/10 text-foreground">
+                      <Database className="h-4 w-4 text-success" />
+                      <AlertTitle>
+                        {language === 'ar' ? 'تم العثور على بيانات مالية حقيقية' : 'Real financial data found'}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {language === 'ar'
+                          ? `تم استرجاعها من قاعدة البيانات لـ ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}).`
+                          : `Retrieved from the database for ${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}).`}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {salaryMismatchDetected && (
+                    <Alert className="border-warning/50 bg-warning/10 text-foreground">
+                      <AlertTriangle className="h-4 w-4 text-warning" />
+                      <AlertTitle>
+                        {language === 'ar' ? 'عدم تطابق في الراتب' : 'Salary mismatch'}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {language === 'ar'
+                          ? 'الراتب الوارد في إثبات العمل لا يتطابق مع الراتب المسجل في قاعدة البيانات. يرجى التحقق يدويًا.'
+                          : "The salary on the employment proof doesn't match the salary on file for this customer. Please verify manually."}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {(matchOutcome?.kind === 'possible_match' || matchOutcome?.kind === 'ambiguous') &&
+                    financialProfile.source !== 'database_match' && (
+                      <Alert className="border-warning/50 bg-warning/10 text-foreground">
+                        <Users className="h-4 w-4 text-warning" />
+                        <AlertTitle>
+                          {matchOutcome.kind === 'ambiguous'
+                            ? language === 'ar'
+                              ? 'تم العثور على عدة سجلات محتملة'
+                              : 'Multiple possible matches found'
+                            : language === 'ar'
+                              ? 'تم العثور على سجل محتمل بالاسم فقط'
+                              : 'Possible match found by name only'}
+                        </AlertTitle>
+                        <AlertDescription className="space-y-2">
+                          <p>
+                            {language === 'ar'
+                              ? 'الاسم وحده غير كافٍ لتأكيد الهوية تلقائيًا — يرجى مراجعة السجل (السجلات) أدناه وتأكيد المطابقة الصحيحة، أو المتابعة دون ربط.'
+                              : "Name alone isn't reliable enough to confirm identity automatically — please review the record(s) below and confirm the correct match, or continue without one."}
+                          </p>
+                          <div className="space-y-2">
+                            {matchOutcome.candidates.map((candidate) => (
+                              <div
+                                key={candidate.id}
+                                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-2.5"
+                              >
+                                <div className="text-sm">
+                                  <p className="font-medium text-foreground">{candidate.customer_name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {candidate.account_number} · {language === 'ar' ? 'هوية تنتهي بـ' : 'ID ending'}{' '}
+                                    {candidate.national_id.slice(-4)}
+                                  </p>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={() => applyDatabaseMatch(candidate)}>
+                                  {language === 'ar' ? 'استخدام هذا السجل' : 'Use this record'}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                          <Button size="sm" variant="ghost" onClick={markFinancialProfileUnresolved}>
+                            {language === 'ar' ? 'ليس هذا العميل — متابعة بدون سجل' : "None of these — continue without a match"}
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                  {matchOutcome?.kind === 'not_found' && financialProfile.source === 'unresolved_needs_review' && (
+                    <Alert className="border-warning/50 bg-warning/10 text-foreground">
+                      <HelpCircle className="h-4 w-4 text-warning" />
+                      <AlertTitle>
+                        {language === 'ar' ? 'لم يتم العثور على سجل مالي مطابق' : 'No matching financial record found'}
+                      </AlertTitle>
+                      <AlertDescription className="space-y-2">
+                        <p>
+                          {language === 'ar'
+                            ? 'لم يتم تعبئة أو تخمين أي بيانات مالية لهذا العميل. سيتطلب هذا الملف مراجعة يدوية لاحقة.'
+                            : 'No financial data has been auto-filled or guessed for this customer. This profile will require manual follow-up review.'}
+                        </p>
+                        {employmentHasUsableExtractedData && (
+                          <Button size="sm" variant="outline" onClick={applyExtractedEmploymentData}>
+                            {language === 'ar'
+                              ? 'استخدام البيانات المستخرجة من إثبات العمل بدلاً من ذلك'
+                              : 'Use extracted employment data instead'}
+                          </Button>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {financialProfile.source !== 'unresolved_needs_review' && (
+                    <div className="rounded-lg border border-border divide-y divide-border">
+                      {[
+                        {
+                          label: language === 'ar' ? 'الدخل الشهري' : 'Monthly Income',
+                          value: financialProfile.monthlyIncome.toLocaleString(),
+                        },
+                        {
+                          label: language === 'ar' ? 'المصاريف الشهرية' : 'Monthly Expenses',
+                          value: financialProfile.monthlyExpenses.toLocaleString(),
+                        },
+                        {
+                          label: language === 'ar' ? 'القروض الحالية' : 'Existing Loans',
+                          value: financialProfile.existingLoans.toLocaleString(),
+                        },
+                        {
+                          label: language === 'ar' ? 'نوع التوظيف' : 'Employment Type',
+                          value: financialProfile.employmentType,
+                        },
+                      ].map((row) => (
+                        <div key={row.label} className="flex items-center justify-between gap-4 px-4 py-2">
+                          <span className="text-sm text-muted-foreground">{row.label}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">{row.value}</span>
+                            {financialSourceBadge(financialProfile.source)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {financialProfile.source === 'unresolved_needs_review' && (
+                    <div className="flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/5 p-3">
+                      <Checkbox
+                        id="unresolved-financial-ack"
+                        checked={unresolvedAcknowledged}
+                        onCheckedChange={(checked) => setUnresolvedAcknowledged(checked === true)}
+                        className="mt-0.5"
+                      />
+                      <Label htmlFor="unresolved-financial-ack" className="text-sm font-normal leading-snug">
+                        {language === 'ar'
+                          ? 'أُقرّ بأن الملف المالي لهذا العميل لم يتم التحقق منه وسيتطلب مراجعة يدوية لاحقة.'
+                          : "I acknowledge this customer's financial profile could not be verified and will require manual follow-up review."}
+                      </Label>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 4: Sign & Print */}
+              {accountStep === 4 && (
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar'
@@ -1312,8 +1949,8 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 4: Complete */}
-              {accountStep === 4 &&
+              {/* Step 5: Complete */}
+              {accountStep === 5 &&
                 (accountSubmitted ? (
                   <div className="flex flex-col items-center text-center gap-4 py-4">
                     <div className={cn('p-4 rounded-full', customerWasNew ? 'bg-success/10' : 'bg-info/10')}>
@@ -1388,14 +2025,17 @@ export const Documents: React.FC = () => {
                           className="flex items-center justify-between gap-4 px-4 py-2.5"
                         >
                           <span className="text-sm text-muted-foreground">{row.label}</span>
-                          <span className="text-sm font-medium text-foreground text-end break-all">
-                            {row.value ||
-                              ('optional' in row && row.optional
-                                ? language === 'ar'
-                                  ? 'غير متوفر'
-                                  : 'Not on ID'
-                                : '—')}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground text-end break-all">
+                              {row.value ||
+                                ('optional' in row && row.optional
+                                  ? language === 'ar'
+                                    ? 'غير متوفر'
+                                    : 'Not on ID'
+                                  : '—')}
+                            </span>
+                            {row.source === 'id' ? idSourceBadge() : financialSourceBadge(row.source)}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1411,20 +2051,20 @@ export const Documents: React.FC = () => {
 
               {/* Footer actions */}
               <div className="flex items-center justify-between gap-2 pt-2">
-                {accountStep < 4 ? (
+                {accountStep < 5 ? (
                   <Button
                     type="button"
                     variant="outline"
                     onClick={closeAccountModal}
-                    disabled={extracting || generatingPdf}
+                    disabled={extracting || employmentExtracting || generatingPdf}
                   >
                     {language === 'ar' ? 'إلغاء' : 'Cancel'}
                   </Button>
-                ) : accountStep === 4 && !accountSubmitted ? (
+                ) : accountStep === 5 && !accountSubmitted ? (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setAccountStep(3)}
+                    onClick={() => setAccountStep(4)}
                     disabled={submitting}
                   >
                     {language === 'ar' ? 'رجوع' : 'Back'}
@@ -1440,7 +2080,12 @@ export const Documents: React.FC = () => {
                     </Button>
                   )}
                   {accountStep === 3 && (
-                    <Button type="button" variant="outline" onClick={() => setAccountStep(2)} disabled={generatingPdf}>
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(2)} disabled={employmentExtracting}>
+                      {language === 'ar' ? 'رجوع' : 'Back'}
+                    </Button>
+                  )}
+                  {accountStep === 4 && (
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(3)} disabled={generatingPdf}>
                       {language === 'ar' ? 'رجوع' : 'Back'}
                     </Button>
                   )}
@@ -1475,13 +2120,44 @@ export const Documents: React.FC = () => {
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 3 && generatedPdfUrl && (
+                  {accountStep === 3 && employmentFile && !employmentDocumentId && !employmentExtractError && (
+                    <Button
+                      type="button"
+                      className="gradient-bg gap-2"
+                      onClick={handleExtractEmployment}
+                      disabled={employmentExtracting}
+                    >
+                      {employmentExtracting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {language === 'ar' ? 'جارٍ الاستخراج...' : 'Extracting...'}
+                        </>
+                      ) : (
+                        <>
+                          <ScanLine className="h-4 w-4" />
+                          {language === 'ar' ? 'استخراج ومطابقة' : 'Extract & Match'}
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {accountStep === 3 && (employmentDocumentId || !employmentFile) && (
+                    <Button
+                      type="button"
+                      className="gradient-bg gap-2"
+                      onClick={goToSignStep}
+                      disabled={!isEmploymentStepValid || matching}
+                    >
+                      {language === 'ar' ? 'متابعة' : 'Continue'}
+                      <StartArrow className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {accountStep === 4 && generatedPdfUrl && (
                     <Button type="button" className="gradient-bg gap-2" onClick={goToCompleteStep}>
                       {language === 'ar' ? 'متابعة' : 'Continue'}
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 4 && !accountSubmitted && (
+                  {accountStep === 5 && !accountSubmitted && (
                     <Button
                       type="button"
                       className="gradient-bg gap-2"
@@ -1501,7 +2177,7 @@ export const Documents: React.FC = () => {
                       )}
                     </Button>
                   )}
-                  {accountStep === 4 && accountSubmitted && (
+                  {accountStep === 5 && accountSubmitted && (
                     <Button type="button" className="gradient-bg" onClick={closeAccountModal}>
                       {language === 'ar' ? 'إغلاق' : 'Close'}
                     </Button>

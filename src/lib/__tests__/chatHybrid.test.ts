@@ -37,6 +37,7 @@ function makeCustomer(overrides: Partial<BankCustomerRecord> = {}): BankCustomer
     loan_purpose: 'personal',
     loan_restricted: false,
     restriction_reason: null,
+    financial_profile_source: 'database_match',
     created_at: '2026-07-01T00:00:00Z',
     ...overrides,
   };

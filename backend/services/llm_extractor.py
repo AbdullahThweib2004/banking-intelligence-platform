@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import logging
-import os
 import re
-from typing import Any
-
-import httpx
 
 from services.field_parser import ParsedFields, _compute_confidence, _normalize_date
+from services.llm_client import LlmCallError, call_llm_for_json, llm_configured, user_facing_error
 
-logger = logging.getLogger(__name__)
-
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = os.environ.get("ID_EXTRACT_MODEL", "openai/gpt-4o-mini")
+DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 SYSTEM_PROMPT = """You extract structured identity-document fields from noisy OCR text.
 Respond with ONLY one valid JSON object — no markdown, no code fences, no commentary.
@@ -40,41 +32,7 @@ JSON schema:
 
 
 def llm_fallback_configured() -> bool:
-    return bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
-
-
-def _parse_json_response(content: str) -> dict[str, Any]:
-    text = content.strip()
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if fence:
-        text = fence.group(1).strip()
-    return json.loads(text)
-
-
-def _user_facing_error(code: str) -> str:
-    messages = {
-        "missing_api_key": (
-            "AI-assisted field recovery is unavailable (OPENROUTER_API_KEY not configured). "
-            "Please review and enter missing fields manually."
-        ),
-        "rate_limit": (
-            "AI-assisted field recovery is temporarily unavailable (rate limit). "
-            "Please review and enter missing fields manually."
-        ),
-        "network_error": (
-            "AI-assisted field recovery failed due to a network error. "
-            "Please review and enter missing fields manually."
-        ),
-        "parse_error": (
-            "AI-assisted field recovery returned an invalid response. "
-            "Please review and enter missing fields manually."
-        ),
-        "unknown_error": (
-            "AI-assisted field recovery failed. "
-            "Please review and enter missing fields manually."
-        ),
-    }
-    return messages.get(code, messages["unknown_error"])
+    return llm_configured()
 
 
 def extract_fields_with_llm(raw_text: str) -> tuple[ParsedFields | None, str | None]:
@@ -82,51 +40,16 @@ def extract_fields_with_llm(raw_text: str) -> tuple[ParsedFields | None, str | N
     Returns (parsed_fields, user_facing_error).
     On success: (fields, None). On failure: (None, error_message).
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        logger.warning("[LLM extract] OPENROUTER_API_KEY not set — skipping fallback")
-        return None, _user_facing_error("missing_api_key")
-
-    payload = {
-        "model": DEFAULT_MODEL,
-        "temperature": 0,
-        "max_tokens": 400,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Extract identity fields from this OCR text:\n\n{raw_text}",
-            },
-        ],
-        "response_format": {"type": "json_object"},
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": os.environ.get("OPENROUTER_HTTP_REFERER", "http://localhost:8080"),
-        "X-Title": "BoP ID Field Extraction",
-    }
-
     try:
-        with httpx.Client(timeout=30.0) as client:
-            res = client.post(f"{OPENROUTER_BASE}/chat/completions", json=payload, headers=headers)
-            if res.status_code == 429:
-                logger.warning("[LLM extract] rate limited (429)")
-                return None, _user_facing_error("rate_limit")
-            res.raise_for_status()
-            content = res.json()["choices"][0]["message"]["content"]
-        logger.info("[LLM extract] raw response: %s", content[:500])
-        data = _parse_json_response(content)
-    except httpx.HTTPError as exc:
-        logger.warning("[LLM extract] network/http failed: %s", exc)
-        return None, _user_facing_error("network_error")
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-        logger.warning("[LLM extract] parse failed: %s", exc)
-        return None, _user_facing_error("parse_error")
-    except Exception as exc:
-        logger.warning("[LLM extract] failed: %s", exc)
-        return None, _user_facing_error("unknown_error")
+        data = call_llm_for_json(
+            SYSTEM_PROMPT,
+            f"Extract identity fields from this OCR text:\n\n{raw_text}",
+            model_env_var="ID_EXTRACT_MODEL",
+            default_model=DEFAULT_MODEL,
+            title="BoP ID Field Extraction",
+        )
+    except LlmCallError as exc:
+        return None, user_facing_error(exc.code)
 
     fields = ParsedFields(
         first_name=str(data.get("first_name") or "").strip(),

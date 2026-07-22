@@ -21,6 +21,14 @@ export default defineConfig(({ mode }) => ({
         target: API_TARGET,
         changeOrigin: true,
       },
+      "/documents/extract-employment-proof": {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
+      "^/documents/[^/]+/extract-employment-fields$": {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
       "^/documents/[^/]+/generate-form$": {
         target: API_TARGET,
         changeOrigin: true,

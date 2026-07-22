@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from services.auth import require_account_opening_role
+from services.employment_extractor import extract_employment_fields
 from services.field_extraction import extract_all_fields
 from services.form_generator import FormFields, SignaturePayload, generate_account_opening_pdf
 from services.ocr import run_ocr
@@ -141,6 +142,131 @@ async def extract_fields(
         "language": outcome.language,
         "ocr_language": doc.language,
         "raw_text": doc.raw_text,
+    }
+
+
+@router.post("/extract-employment-proof")
+async def extract_employment_proof(
+    file: UploadFile = File(...),
+    _role: str = Depends(require_account_opening_role),
+):
+    """
+    Upload a proof-of-employment document (payslip, salary certificate, or
+    employer letter — JPG/PNG/PDF), run OCR, and return a document id.
+
+    Mirrors /extract-id's upload step and reuses the same OCR pipeline —
+    only the downstream field-extraction step differs (see
+    /extract-employment-fields below).
+    """
+    if file.content_type not in ALLOWED_TYPES and not (
+        file.filename and file.filename.lower().endswith((".jpg", ".jpeg", ".png", ".pdf"))
+    ):
+        raise HTTPException(status_code=400, detail="Only JPG, PNG, or PDF files are allowed.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+
+    filename = file.filename or "upload.jpg"
+
+    try:
+        ocr = run_ocr(data, filename)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read the document clearly. Please upload a clearer photo or scan.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("OCR failed for %s", filename)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read the document clearly. Please upload a clearer photo or scan.",
+        ) from exc
+
+    doc = create_document(
+        filename,
+        ocr.raw_text,
+        ocr.language,
+        ocr_confidence=ocr.ocr_confidence,
+        doc_type="employment_proof",
+    )
+
+    logger.info("[extract-employment-proof] stored document_id=%s", doc.document_id)
+
+    return {
+        "document_id": doc.document_id,
+        "language": doc.language,
+        "ocr_confidence": doc.ocr_confidence,
+    }
+
+
+@router.post("/{document_id}/extract-employment-fields")
+async def extract_employment_fields_endpoint(
+    document_id: str,
+    _role: str = Depends(require_account_opening_role),
+):
+    """Parse employer/salary fields from a previously OCR'd employment-proof document."""
+    doc = get_document(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if doc.doc_type != "employment_proof":
+        raise HTTPException(
+            status_code=400,
+            detail="This document was not uploaded as a proof of employment.",
+        )
+
+    if not doc.raw_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read the document clearly. Please upload a clearer photo or scan.",
+        )
+
+    parsed, warning = extract_employment_fields(doc.raw_text)
+
+    if parsed is None:
+        # LLM unavailable/failed — never guess; return an all-empty result
+        # with the warning so the UI requires manual entry, same pattern as
+        # the ID pipeline's own "AI recovery unavailable" fallback.
+        logger.warning(
+            "[extract-employment-fields] document_id=%s | extraction failed: %s",
+            document_id,
+            warning,
+        )
+        return {
+            "document_id": doc.document_id,
+            "full_name": "",
+            "national_id": "",
+            "employer_name": "",
+            "job_title": "",
+            "monthly_salary": None,
+            "employment_status": "",
+            "issue_date": "",
+            "confidence": 0,
+            "extraction_warnings": [warning] if warning else [],
+        }
+
+    logger.info(
+        "[extract-employment-fields] document_id=%s | employer=%s salary=%s status=%s confidence=%.1f",
+        document_id,
+        parsed.employer_name,
+        parsed.monthly_salary,
+        parsed.employment_status,
+        parsed.confidence,
+    )
+
+    return {
+        "document_id": doc.document_id,
+        "full_name": parsed.full_name,
+        "national_id": parsed.national_id,
+        "employer_name": parsed.employer_name,
+        "job_title": parsed.job_title,
+        "monthly_salary": parsed.monthly_salary,
+        "employment_status": parsed.employment_status,
+        "issue_date": parsed.issue_date,
+        "confidence": parsed.confidence,
+        "extraction_warnings": [],
     }
 
 
