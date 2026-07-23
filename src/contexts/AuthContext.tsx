@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../integrations/supabase/client';
 import { Role, canAccess as canAccessRoute } from '@/lib/roles';
@@ -30,6 +30,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [role, setRole] = useState<Role | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // The user id whose profile we've already fully resolved at least once
+  // (or null, meaning "resolved to logged-out") — see the auth-event
+  // handling below for why this matters.
+  const resolvedUserIdRef = useRef<string | null>(null);
+  const hasResolvedOnceRef = useRef(false);
 
   // Fetch the user's profile (and role) from the `profiles` table.
   // Never throws: on any failure it clears role/profile so the app keeps working.
@@ -82,28 +87,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!session?.user) {
         setRole(null);
         setProfile(null);
+        resolvedUserIdRef.current = null;
+        hasResolvedOnceRef.current = true;
         setIsLoading(false);
         return;
       }
 
       const userId = session.user.id;
 
-      // Token refresh on tab focus must NOT flip loading=true — that unmounts
-      // the entire app via RequireAuth and wipes in-memory UI state (e.g. chat).
-      if (event === 'TOKEN_REFRESHED') {
+      // INCIDENT: Supabase's client re-emits auth events — not just
+      // TOKEN_REFRESHED, but in some cases SIGNED_IN again too — for the
+      // SAME already-authenticated user simply because a background browser
+      // tab regained focus (e.g. switching back from another site). If this
+      // is the same user we've already resolved a profile for at least
+      // once, refresh it quietly but NEVER flip isLoading back to true:
+      // that unmounts the entire app via RequireAuth (every page, every open
+      // dialog/wizard) for an event that changed nothing about who's signed
+      // in. isLoading is only for the two cases where the app genuinely
+      // doesn't know the role yet: first load, and switching to a different
+      // account.
+      if (hasResolvedOnceRef.current && resolvedUserIdRef.current === userId) {
+        loadProfile(userId);
         return;
       }
 
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        setIsLoading(true);
-        setTimeout(() => {
-          loadProfile(userId).finally(() => setIsLoading(false));
-        }, 0);
-        return;
-      }
-
-      // Other events (USER_UPDATED, etc.) — refresh profile silently.
-      loadProfile(userId);
+      setIsLoading(true);
+      setTimeout(() => {
+        loadProfile(userId).finally(() => {
+          resolvedUserIdRef.current = userId;
+          hasResolvedOnceRef.current = true;
+          setIsLoading(false);
+        });
+      }, 0);
     });
 
     // THEN check for an existing session. Loading stays true until both the
@@ -114,7 +129,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (session?.user) {
         await loadProfile(session.user.id);
+        resolvedUserIdRef.current = session.user.id;
       }
+      hasResolvedOnceRef.current = true;
       setIsLoading(false);
     });
 
