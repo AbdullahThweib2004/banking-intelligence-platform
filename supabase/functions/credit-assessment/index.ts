@@ -15,12 +15,15 @@
 //
 // Deploy:   supabase functions deploy credit-assessment
 // Secrets:  supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
-//           (optional) supabase secrets set CREDIT_MODEL=krea/krea-2-medium
+//           (optional) supabase secrets set CREDIT_MODEL=openai/gpt-4o-mini
 //           (optional) supabase secrets set CREDIT_MAX_TOKENS=350
 // ---------------------------------------------------------------------------
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "krea/krea-2-medium";
+// "krea/krea-2-medium" does not exist on OpenRouter (confirmed: every
+// request returns a bare 500 "Internal Server Error") — reverted to a
+// known-working default. See the incident note in backend/services/llm_client.py.
+const CREDIT_MODEL = Deno.env.get("CREDIT_MODEL") ?? "openai/gpt-4o-mini";
 const MAX_TOKENS = Number(Deno.env.get("CREDIT_MAX_TOKENS") ?? "350");
 
 const corsHeaders = {

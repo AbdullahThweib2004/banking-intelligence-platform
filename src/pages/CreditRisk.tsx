@@ -183,6 +183,8 @@ interface BankCustomerRow {
   loan_purpose: string;
   loan_restricted?: boolean;
   restriction_reason?: string | null;
+  salary_currency?: string;
+  job_role?: string | null;
 }
 
 const LOAN_RESTRICTED_MESSAGE =
@@ -322,6 +324,10 @@ export const CreditRisk: React.FC = () => {
   const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
   const [assessmentResult, setAssessmentResult] = useState<SavedRiskExplanation | null>(null);
   const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
+  // Read-only display only — captured from the employment-proof contract
+  // during Open New Account (see bank_customers.job_role); not part of the
+  // submitted assessment payload, since risk scoring only uses employmentType.
+  const [loadedJobRole, setLoadedJobRole] = useState<string | null>(null);
 
   const resetAssessmentForm = () => {
     setAccountNumber('');
@@ -331,6 +337,7 @@ export const CreditRisk: React.FC = () => {
     setFormData({ ...EMPTY_ASSESSMENT_FORM });
     setAssessmentResult(null);
     setAssessmentSubmitting(false);
+    setLoadedJobRole(null);
   };
 
   const handleInputChange = (field: string, value: string) => {
@@ -382,6 +389,7 @@ export const CreditRisk: React.FC = () => {
 
     const row = data as BankCustomerRow;
     const isRestricted = Boolean(row.loan_restricted);
+    setLoadedJobRole(row.job_role ?? null);
 
     setFormData({
       customerName: row.customer_name,
@@ -392,11 +400,13 @@ export const CreditRisk: React.FC = () => {
       employmentType: row.employment_type,
       loanAmount: '',
       loanPurpose: row.loan_purpose,
-      // bank_customers doesn't carry these — start from a sane estimate
-      // (existing loans balance / 12) and let the employee confirm/edit them.
+      // bank_customers doesn't carry a loan-amount currency, but it does now
+      // carry the customer's real salary currency (captured from their
+      // employment-proof contract at account opening) — use it here instead
+      // of always assuming ILS, so staff has one fewer field to fill in.
       loanType: '',
       loanCurrency: 'ILS',
-      salaryCurrency: 'ILS',
+      salaryCurrency: row.salary_currency || 'ILS',
       monthlyObligations: row.existing_loans ? String(Math.round((row.existing_loans / 12) * 100) / 100) : '',
       clientAge: '',
       loanTermYears: '5',
@@ -1000,6 +1010,12 @@ export const CreditRisk: React.FC = () => {
                       {language === 'ar'
                         ? 'تم تحميل بيانات العميل — يمكنك تعديل الحقول قبل التقييم'
                         : 'Customer loaded — you may edit fields before assessing'}
+                    </p>
+                  )}
+                  {customerLoaded && !customerLoanRestricted && loadedJobRole && (
+                    <p className="text-xs text-muted-foreground">
+                      {language === 'ar' ? 'الدور الوظيفي (من إثبات العمل): ' : 'Job role (from employment proof): '}
+                      <span className="font-medium text-foreground">{loadedJobRole}</span>
                     </p>
                   )}
                   {customerLoaded && customerLoanRestricted && (

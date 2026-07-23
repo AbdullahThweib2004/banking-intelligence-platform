@@ -74,7 +74,6 @@ import {
   type EmploymentExtractedFields,
 } from '@/lib/accountApi';
 import {
-  findOrCreateBankCustomerFromAccountOpening,
   matchCustomerFinancialRecord,
   UNRESOLVED_FINANCIAL_PROFILE,
   type BankCustomerRecord,
@@ -82,7 +81,13 @@ import {
   type FinancialProfileSource,
   type EmploymentMatchOutcome,
 } from '@/lib/bankCustomers';
-import { isSalaryMismatch } from '@/lib/employmentMatch';
+import { openAccountForCustomer } from '@/lib/accountOpening';
+import {
+  isSalaryMismatch,
+  hasUsableEmploymentData,
+  buildFinancialProfileFromEmploymentFields,
+  isFinancialProfileEmpty,
+} from '@/lib/employmentMatch';
 import { validateName, validateNationalId, validateDateOfBirth } from '@/lib/validation';
 import SignaturePad, { type SignaturePadHandle } from '@/components/SignaturePad';
 import { PageOnboardingTour } from '@/components/onboarding/PageOnboardingTour';
@@ -158,6 +163,18 @@ interface BranchTask {
   titleKey: string;
   descKey: string;
   available: boolean;
+}
+
+/**
+ * Lightweight summary shown on the wizard's final "Complete" screen — only
+ * `customer_name`/`account_number` are ever displayed there, so this is
+ * intentionally NOT the full BankCustomerRecord/UnemployedCustomerRecord
+ * shape, letting the Complete step handle both categories identically.
+ */
+interface CreatedCustomerSummary {
+  customer_name: string;
+  account_number: string;
+  category: 'employed' | 'unemployed';
 }
 
 const branchTasks: BranchTask[] = [
@@ -247,8 +264,14 @@ export const Documents: React.FC = () => {
   const [referenceId, setReferenceId] = useState('');
   const [documentId, setDocumentId] = useState('');
 
-  // Step 3 — Employment Proof Upload (retrieves REAL financial data instead
-  // of the old random-default generator; see bankCustomers.ts).
+  // Step 3 — Employment Status branch (employed vs unemployed). Drives
+  // whether Step 4 (Employment Proof Upload) is shown at all, and which
+  // table/account-number family the customer is created under.
+  const [employmentStatus, setEmploymentStatus] = useState<'employed' | 'unemployed' | null>(null);
+
+  // Step 4 — Employment Proof Upload, employed-only (retrieves REAL
+  // financial data instead of the old random-default generator; see
+  // bankCustomers.ts). Unemployed customers skip this step entirely.
   const [employmentFile, setEmploymentFile] = useState<File | null>(null);
   const [employmentDragging, setEmploymentDragging] = useState(false);
   const [employmentExtracting, setEmploymentExtracting] = useState(false);
@@ -264,7 +287,7 @@ export const Documents: React.FC = () => {
   );
   const [unresolvedAcknowledged, setUnresolvedAcknowledged] = useState(false);
 
-  const [newCustomerRecord, setNewCustomerRecord] = useState<BankCustomerRecord | null>(null);
+  const [newCustomerRecord, setNewCustomerRecord] = useState<CreatedCustomerSummary | null>(null);
   const [customerWasNew, setCustomerWasNew] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -305,6 +328,7 @@ export const Documents: React.FC = () => {
     setAccountSubmitted(false);
     setReferenceId('');
     setDocumentId('');
+    setEmploymentStatus(null);
     setEmploymentFile(null);
     setEmploymentDragging(false);
     setEmploymentExtracting(false);
@@ -506,6 +530,8 @@ export const Documents: React.FC = () => {
       employmentType: customer.employment_type,
       loanAmount: customer.loan_amount,
       loanPurpose: customer.loan_purpose,
+      salaryCurrency: customer.salary_currency || 'ILS',
+      jobRole: customer.job_role,
       source: 'database_match',
     });
     setUnresolvedAcknowledged(false);
@@ -518,23 +544,32 @@ export const Documents: React.FC = () => {
    * placeholder. Expenses/existing-loans/loan-amount/purpose have no
    * equivalent on a payslip, so they stay at 0/'unknown', same as the
    * database's own NOT-NULL defaults — never guessed.
+   *
+   * Called automatically by handleExtractEmployment/runCustomerMatch below
+   * (not just from a manual button) — see the incident note there.
    */
   const applyExtractedEmploymentData = () => {
     if (!employmentFields) return;
-    setFinancialProfile({
-      monthlyIncome: employmentFields.monthly_salary ?? 0,
-      monthlyExpenses: 0,
-      existingLoans: 0,
-      employmentType: employmentFields.employment_status?.trim() || 'unknown',
-      loanAmount: 0,
-      loanPurpose: 'unknown',
-      source: 'employment_proof_extracted',
-    });
+    setFinancialProfile(buildFinancialProfileFromEmploymentFields(employmentFields));
     setUnresolvedAcknowledged(false);
   };
 
-  const markFinancialProfileUnresolved = () => {
+  // Unconditional — used when staff explicitly says the currently-applied
+  // data (extracted or otherwise) is wrong and this profile really should
+  // be flagged for manual review, bypassing any fallback.
+  const forceMarkFinancialProfileUnresolved = () => {
     setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+  };
+
+  // Declining a name-only DB candidate ("None of these") shouldn't also
+  // throw away real data the employment-proof document already provided —
+  // fall back to that instead of blank/unresolved whenever it's available.
+  const markFinancialProfileUnresolved = () => {
+    if (hasUsableEmploymentData(employmentFields)) {
+      applyExtractedEmploymentData();
+      return;
+    }
+    forceMarkFinancialProfileUnresolved();
   };
 
   /**
@@ -543,6 +578,13 @@ export const Documents: React.FC = () => {
    * employmentMatch.ts). Runs automatically on entering Step 3, independent
    * of whether an employment-proof file has been uploaded/extracted yet,
    * since the identifiers it needs come entirely from Step 1.
+   *
+   * INCIDENT FIX: this used to unconditionally fall back to
+   * UNRESOLVED_FINANCIAL_PROFILE whenever there was no database match — even
+   * when the employment proof had ALREADY been uploaded and extracted with
+   * real data (e.g. if staff retries the match after extraction completes).
+   * It now checks for usable extracted data first, same as
+   * handleExtractEmployment does for the opposite ordering.
    */
   const runCustomerMatch = useCallback(async () => {
     if (matching) return;
@@ -556,6 +598,25 @@ export const Documents: React.FC = () => {
       setMatchOutcome(outcome);
       if (outcome.kind === 'matched') {
         applyDatabaseMatch(outcome.customer);
+        // Even a "real" database match can itself be genuinely empty — a
+        // legacy/stray row predating this feature entirely (account numbers
+        // like BOP-200013/BOP-200018 outside this app's real BOP-1NNNNN
+        // family — see 20260711120000_fix_bank_customers_account_sequence.sql).
+        // If extraction already has real data by the time this runs, prefer
+        // it over an empty match instead of silently tagging 0/'unknown' as
+        // verified "From Database" data.
+        if (
+          isFinancialProfileEmpty({
+            monthlyIncome: outcome.customer.monthly_income,
+            employmentType: outcome.customer.employment_type,
+            jobRole: outcome.customer.job_role,
+          }) &&
+          hasUsableEmploymentData(employmentFields)
+        ) {
+          setFinancialProfile(buildFinancialProfileFromEmploymentFields(employmentFields!));
+        }
+      } else if (hasUsableEmploymentData(employmentFields)) {
+        setFinancialProfile(buildFinancialProfileFromEmploymentFields(employmentFields!));
       } else {
         setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
       }
@@ -568,12 +629,16 @@ export const Documents: React.FC = () => {
             : 'Could not search for a matching customer record.'
       );
       setMatchOutcome(null);
-      setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+      if (hasUsableEmploymentData(employmentFields)) {
+        setFinancialProfile(buildFinancialProfileFromEmploymentFields(employmentFields!));
+      } else {
+        setFinancialProfile(UNRESOLVED_FINANCIAL_PROFILE);
+      }
     } finally {
       setMatching(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountForm.idNumber, customerFullName, language]);
+  }, [accountForm.idNumber, customerFullName, language, employmentFields]);
 
   const handleExtractEmployment = async () => {
     if (!employmentFile || employmentExtracting) return;
@@ -596,6 +661,25 @@ export const Documents: React.FC = () => {
           ? fields.extraction_warnings.filter((w): w is string => typeof w === 'string' && w.trim() !== '')
           : []
       );
+
+      // INCIDENT FIX: extraction used to only populate `employmentFields` for
+      // display — nothing ever copied it into the applied `financialProfile`
+      // unless a staff member noticed and clicked a separate "use extracted
+      // data" button. That silently left real, successfully-extracted salary
+      // data unused, showing 0/'unknown'/"Needs Review" on the final review
+      // screen even though the document had real values. Auto-apply it here
+      // whenever we're not already sitting on a confirmed, POPULATED database
+      // match. A database match that is itself empty (e.g. a legacy/stray
+      // row predating this feature — see the BOP-200013/BOP-200018 incident
+      // note on isFinancialProfileEmpty) is NOT treated as authoritative —
+      // real extracted data still wins over silently-empty "From Database"
+      // values.
+      const sittingOnPopulatedMatch =
+        financialProfile.source === 'database_match' && !isFinancialProfileEmpty(financialProfile);
+      if (!sittingOnPopulatedMatch && hasUsableEmploymentData(fields)) {
+        setFinancialProfile(buildFinancialProfileFromEmploymentFields(fields));
+        setUnresolvedAcknowledged(false);
+      }
 
       await writeAccountAudit(
         'account_opening_employment_extract',
@@ -624,6 +708,15 @@ export const Documents: React.FC = () => {
   const salaryMismatchDetected =
     matchOutcome?.kind === 'matched' &&
     isSalaryMismatch(employmentFields?.monthly_salary ?? null, matchOutcome.customer.monthly_income);
+
+  // True for genuinely unresolved profiles AND for a database match that
+  // itself turned out to be empty (e.g. a legacy/stray row predating this
+  // feature — see isFinancialProfileEmpty) that extraction couldn't fill
+  // in either — both cases are "nothing real to show" even though only the
+  // first literally has source === 'unresolved_needs_review'.
+  const financialProfileNeedsReview =
+    financialProfile.source === 'unresolved_needs_review' ||
+    (financialProfile.source === 'database_match' && isFinancialProfileEmpty(financialProfile));
 
   // Runs every review-step check and returns the FIRST failing message (or
   // null when everything passes) — used both to gate the "Continue" button
@@ -723,7 +816,28 @@ export const Documents: React.FC = () => {
       return;
     }
     setAccountStep(3);
-    void runCustomerMatch();
+  };
+
+  // Employment Status step's "Continue" — branches the whole rest of the
+  // wizard. Employed customers go to Step 4 (Employment Proof Upload) and
+  // trigger the database match immediately (it only needs Step 1's identity
+  // data). Unemployed customers skip straight to Step 5 (Sign & Generate) —
+  // there is no financial data to collect or match for this category.
+  const goToEmploymentProofOrSkip = () => {
+    if (!employmentStatus) {
+      toast.error(
+        language === 'ar'
+          ? 'يرجى تحديد ما إذا كان العميل موظفًا أم غير موظف'
+          : 'Please select whether the customer is employed or unemployed'
+      );
+      return;
+    }
+    if (employmentStatus === 'employed') {
+      setAccountStep(4);
+      void runCustomerMatch();
+    } else {
+      setAccountStep(5);
+    }
   };
 
   // Gates the Employment Proof step's "Continue" button — mirrors
@@ -745,7 +859,7 @@ export const Documents: React.FC = () => {
         ar: 'يرجى تأكيد سجل عميل مطابق، أو اختيار المتابعة دون سجل.',
       };
     }
-    if (financialProfile.source === 'unresolved_needs_review' && !unresolvedAcknowledged) {
+    if (financialProfileNeedsReview && !unresolvedAcknowledged) {
       return {
         en: 'Please acknowledge that this financial profile requires manual follow-up review before continuing.',
         ar: 'يرجى الإقرار بأن هذا الملف المالي يتطلب مراجعة يدوية لاحقة قبل المتابعة.',
@@ -762,7 +876,7 @@ export const Documents: React.FC = () => {
       toast.error(language === 'ar' ? stepError.ar : stepError.en);
       return;
     }
-    setAccountStep(4);
+    setAccountStep(5);
   };
 
   const handleGenerateForm = async () => {
@@ -859,7 +973,7 @@ export const Documents: React.FC = () => {
       );
       return;
     }
-    setAccountStep(5);
+    setAccountStep(6);
   };
 
   const handleCompleteProcess = async () => {
@@ -898,15 +1012,38 @@ export const Documents: React.FC = () => {
 
       // Step 4b: find-or-create the REAL customer record. This is what
       // actually "opens the account" — the FastAPI call above only produces
-      // paperwork. If a customer with this national ID already exists (e.g.
-      // the employee re-runs the wizard on the same ID photo), the existing
-      // row and its account number are reused instead of failing — only a
-      // genuinely new national ID gets a new, DB-assigned BOP-1NNNNN number.
-      const { customer: customerRecord, wasCreated } = await findOrCreateBankCustomerFromAccountOpening({
-        customerName: customerFullName || accountForm.idNumber.trim(),
-        nationalId: accountForm.idNumber.trim(),
-        financialProfile,
-      });
+      // paperwork. Branches by employment status into two entirely separate
+      // tables/account-number families (see accountOpening.ts) — an
+      // "employed" customer gets BOP-1NNNNN in bank_customers with their
+      // resolved financial profile; an "unemployed" customer gets BOP-N in
+      // unemployed_customers, identity fields only, never loan-eligible. If
+      // a customer with this national ID already exists in the SAME
+      // category (e.g. the employee re-runs the wizard on the same ID
+      // photo), the existing row/account number is reused instead of
+      // failing; if it exists under the OTHER category, this throws rather
+      // than silently creating a second account for the same person.
+      const customerName = customerFullName || accountForm.idNumber.trim();
+      const nationalId = accountForm.idNumber.trim();
+      const openResult =
+        employmentStatus === 'unemployed'
+          ? await openAccountForCustomer('unemployed', {
+              customerName,
+              nationalId,
+              dateOfBirth: accountForm.dateOfBirth.trim() || null,
+              fatherName: accountForm.fatherName.trim() || null,
+              motherName: accountForm.motherName.trim() || null,
+            })
+          : await openAccountForCustomer('employed', {
+              customerName,
+              nationalId,
+              financialProfile,
+            });
+      const customerRecord = {
+        customer_name: openResult.customer.customer_name,
+        account_number: openResult.customer.account_number,
+        category: openResult.category,
+      };
+      const wasCreated = openResult.wasCreated;
       setNewCustomerRecord(customerRecord);
       setCustomerWasNew(wasCreated);
 
@@ -1096,26 +1233,43 @@ export const Documents: React.FC = () => {
       optional: true,
       source: 'id' as const,
     },
-    {
-      label: language === 'ar' ? 'الدخل الشهري' : 'Monthly Income',
-      value: financialProfile.monthlyIncome.toLocaleString(),
-      source: financialProfile.source,
-    },
-    {
-      label: language === 'ar' ? 'المصاريف الشهرية' : 'Monthly Expenses',
-      value: financialProfile.monthlyExpenses.toLocaleString(),
-      source: financialProfile.source,
-    },
-    {
-      label: language === 'ar' ? 'القروض الحالية' : 'Existing Loans',
-      value: financialProfile.existingLoans.toLocaleString(),
-      source: financialProfile.source,
-    },
-    {
-      label: language === 'ar' ? 'نوع التوظيف' : 'Employment Type',
-      value: financialProfile.employmentType,
-      source: financialProfile.source,
-    },
+    // Unemployed customers have no financial profile at all — nothing was
+    // collected, matched, or stored for this category, so nothing to show.
+    ...(employmentStatus === 'unemployed'
+      ? [
+          {
+            label: language === 'ar' ? 'الأهلية للقروض' : 'Loan Eligibility',
+            value: language === 'ar' ? 'غير مؤهل (غير موظف)' : 'Not eligible (unemployed)',
+            source: 'id' as const,
+          },
+        ]
+      : [
+          {
+            label: language === 'ar' ? 'الدخل الشهري' : 'Monthly Income',
+            value: `${financialProfile.monthlyIncome.toLocaleString()} ${financialProfile.salaryCurrency}`,
+            source: financialProfile.source,
+          },
+          {
+            label: language === 'ar' ? 'المصاريف الشهرية' : 'Monthly Expenses',
+            value: financialProfile.monthlyExpenses.toLocaleString(),
+            source: financialProfile.source,
+          },
+          {
+            label: language === 'ar' ? 'القروض الحالية' : 'Existing Loans',
+            value: financialProfile.existingLoans.toLocaleString(),
+            source: financialProfile.source,
+          },
+          {
+            label: language === 'ar' ? 'نوع التوظيف' : 'Employment Type',
+            value: financialProfile.employmentType,
+            source: financialProfile.source,
+          },
+          {
+            label: language === 'ar' ? 'الدور الوظيفي' : 'Job Role',
+            value: financialProfile.jobRole || '',
+            source: financialProfile.source,
+          },
+        ]),
   ];
 
   const filteredDocuments = documents.filter((doc) => {
@@ -1234,7 +1388,7 @@ export const Documents: React.FC = () => {
           open={accountModalOpen}
           onOpenChange={(open) => (open ? setAccountModalOpen(true) : closeAccountModal())}
         >
-            <DialogContent className={cn('sm:max-w-lg', accountStep >= 3 && 'sm:max-w-2xl max-h-[90vh] overflow-y-auto')}>
+            <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {language === 'ar' ? 'فتح حساب جديد' : 'Open New Account'}
@@ -1246,49 +1400,64 @@ export const Documents: React.FC = () => {
                 </DialogDescription>
               </DialogHeader>
 
-              {/* Step indicator */}
-              <div className="flex items-center justify-between py-1">
-                {[
+              {/* Step indicator — Step 4 (Employment Proof) is omitted from
+                  the list entirely for unemployed customers (nothing to
+                  upload for that category).
+
+                  Deliberately just circles + connectors, with ONE caption
+                  line below for the current step's label — six per-circle
+                  whitespace-nowrap labels (some long: "Sign & Generate Form")
+                  cannot fit edge-to-edge in a modal this width without
+                  overflowing/crowding the last few steps on the trailing
+                  side. A single caption scales to any number of steps or
+                  label length with zero overflow risk. */}
+              {(() => {
+                const steps = [
                   { n: 1, label: language === 'ar' ? 'رفع الهوية' : 'Upload ID' },
                   { n: 2, label: language === 'ar' ? 'مراجعة البيانات' : 'Review Data' },
-                  { n: 3, label: language === 'ar' ? 'إثبات العمل' : 'Employment Proof' },
-                  { n: 4, label: language === 'ar' ? 'توقيع وإنشاء النموذج' : 'Sign & Generate Form' },
-                  { n: 5, label: language === 'ar' ? 'اكتمال' : 'Complete' },
-                ].map((s, i, arr) => (
-                  <React.Fragment key={s.n}>
-                    <div className="flex flex-col items-center gap-1.5">
-                      <div
-                        className={cn(
-                          'flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors',
-                          accountStep > s.n && 'bg-primary border-primary text-primary-foreground',
-                          accountStep === s.n && 'border-primary text-primary',
-                          accountStep < s.n && 'border-border text-muted-foreground'
-                        )}
-                      >
-                        {accountStep > s.n ? <CheckCircle2 className="h-5 w-5" /> : s.n}
-                      </div>
-                      <span
-                        className={cn(
-                          'text-xs whitespace-nowrap',
-                          accountStep >= s.n
-                            ? 'text-foreground font-medium'
-                            : 'text-muted-foreground'
-                        )}
-                      >
-                        {s.label}
-                      </span>
+                  { n: 3, label: language === 'ar' ? 'حالة التوظيف' : 'Employment Status' },
+                  ...(employmentStatus === 'unemployed'
+                    ? []
+                    : [{ n: 4, label: language === 'ar' ? 'إثبات العمل' : 'Employment Proof' }]),
+                  { n: 5, label: language === 'ar' ? 'توقيع وإنشاء النموذج' : 'Sign & Generate Form' },
+                  { n: 6, label: language === 'ar' ? 'اكتمال' : 'Complete' },
+                ];
+                const currentIndex = Math.max(0, steps.findIndex((s) => s.n === accountStep));
+                const currentLabel = steps[currentIndex]?.label ?? '';
+                return (
+                  <div className="space-y-2 py-1">
+                    <div className="flex items-center">
+                      {steps.map((s, i, arr) => (
+                        <React.Fragment key={s.n}>
+                          <div
+                            className={cn(
+                              'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors',
+                              accountStep > s.n && 'bg-primary border-primary text-primary-foreground',
+                              accountStep === s.n && 'border-primary text-primary',
+                              accountStep < s.n && 'border-border text-muted-foreground'
+                            )}
+                          >
+                            {accountStep > s.n ? <CheckCircle2 className="h-5 w-5" /> : i + 1}
+                          </div>
+                          {i < arr.length - 1 && (
+                            <div
+                              className={cn(
+                                'h-0.5 flex-1 mx-1.5 rounded transition-colors',
+                                accountStep > s.n ? 'bg-primary' : 'bg-border'
+                              )}
+                            />
+                          )}
+                        </React.Fragment>
+                      ))}
                     </div>
-                    {i < arr.length - 1 && (
-                      <div
-                        className={cn(
-                          'h-0.5 flex-1 mx-2 rounded',
-                          accountStep > s.n ? 'bg-primary' : 'bg-border'
-                        )}
-                      />
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
+                    <p className="text-sm font-medium text-foreground text-center">
+                      {language === 'ar'
+                        ? `الخطوة ${currentIndex + 1} من ${steps.length}: ${currentLabel}`
+                        : `Step ${currentIndex + 1} of ${steps.length}: ${currentLabel}`}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Step 1: Upload ID + extraction */}
               {accountStep === 1 && (
@@ -1542,10 +1711,80 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 3: Employment Proof Upload — retrieves REAL financial
-                  data from the database (or, failing that, from the proof
-                  itself) instead of the old random-default generator. */}
+              {/* Step 3: Employment Status branch — determines everything
+                  downstream: whether Step 4 (Employment Proof) even
+                  happens, which table the customer is created in, and
+                  which account-number family they get. See
+                  accountOpening.ts / unemployedCustomers.ts. */}
               {accountStep === 3 && (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {language === 'ar'
+                      ? 'هل هذا العميل موظف حاليًا؟ يحدد هذا الخطوات التالية وأهلية القرض.'
+                      : 'Is this customer currently employed? This determines the next steps and loan eligibility.'}
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setEmploymentStatus('employed')}
+                      className={cn(
+                        'text-start rounded-xl border-2 p-5 transition-all',
+                        employmentStatus === 'employed'
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/50'
+                      )}
+                    >
+                      <Briefcase
+                        className={cn(
+                          'h-8 w-8 mb-3',
+                          employmentStatus === 'employed' ? 'text-primary' : 'text-muted-foreground'
+                        )}
+                      />
+                      <h3 className="font-semibold text-foreground">
+                        {language === 'ar' ? 'موظف' : 'Employed'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {language === 'ar'
+                          ? 'يتطلب رفع إثبات عمل. مؤهل للتقدم بطلب قرض لاحقًا.'
+                          : 'Requires an employment-proof upload. Eligible to apply for a loan later.'}
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEmploymentStatus('unemployed')}
+                      className={cn(
+                        'text-start rounded-xl border-2 p-5 transition-all',
+                        employmentStatus === 'unemployed'
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/50'
+                      )}
+                    >
+                      <UserX
+                        className={cn(
+                          'h-8 w-8 mb-3',
+                          employmentStatus === 'unemployed' ? 'text-primary' : 'text-muted-foreground'
+                        )}
+                      />
+                      <h3 className="font-semibold text-foreground">
+                        {language === 'ar' ? 'غير موظف' : 'Unemployed'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {language === 'ar'
+                          ? 'ينتقل مباشرة إلى إنشاء الحساب. غير مؤهل للتقدم بطلب قرض.'
+                          : 'Goes directly to account creation. Not eligible to apply for a loan.'}
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Employment Proof Upload (employed only) — retrieves
+                  REAL financial data from the database (or, failing that,
+                  from the proof itself) instead of the old random-default
+                  generator. */}
+              {accountStep === 4 && (
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar'
@@ -1703,19 +1942,72 @@ export const Documents: React.FC = () => {
                     </div>
                   )}
 
-                  {matchOutcome?.kind === 'matched' && (
-                    <Alert className="border-success/40 bg-success/10 text-foreground">
-                      <Database className="h-4 w-4 text-success" />
-                      <AlertTitle>
-                        {language === 'ar' ? 'تم العثور على بيانات مالية حقيقية' : 'Real financial data found'}
-                      </AlertTitle>
-                      <AlertDescription>
-                        {language === 'ar'
-                          ? `تم استرجاعها من قاعدة البيانات لـ ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}).`
-                          : `Retrieved from the database for ${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}).`}
-                      </AlertDescription>
-                    </Alert>
-                  )}
+                  {matchOutcome?.kind === 'matched' &&
+                    !(financialProfile.source === 'database_match' && isFinancialProfileEmpty(financialProfile)) && (
+                      <Alert className="border-success/40 bg-success/10 text-foreground">
+                        <Database className="h-4 w-4 text-success" />
+                        <AlertTitle>
+                          {language === 'ar' ? 'تم العثور على بيانات مالية حقيقية' : 'Real financial data found'}
+                        </AlertTitle>
+                        <AlertDescription>
+                          {language === 'ar'
+                            ? `تم استرجاعها من قاعدة البيانات لـ ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}).`
+                            : `Retrieved from the database for ${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}).`}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                  {/* A database match was found, but the row itself is empty
+                      (e.g. a legacy/stray record predating this feature —
+                      see the account-number-family incident note on
+                      isFinancialProfileEmpty), AND extraction couldn't fill
+                      the gap either (failed, unavailable, or not yet
+                      attempted). Never silently present 0/'unknown' as if it
+                      were verified "From Database" data — say so plainly and
+                      point at the two ways forward. */}
+                  {matchOutcome?.kind === 'matched' &&
+                    financialProfile.source === 'database_match' &&
+                    isFinancialProfileEmpty(financialProfile) && (
+                      <Alert className="border-warning/50 bg-warning/10 text-foreground">
+                        <AlertTriangle className="h-4 w-4 text-warning" />
+                        <AlertTitle>
+                          {language === 'ar'
+                            ? 'السجل المطابق لا يحتوي على بيانات مالية'
+                            : 'The matched record has no financial data on file'}
+                        </AlertTitle>
+                        <AlertDescription className="space-y-2">
+                          <p>
+                            {language === 'ar'
+                              ? `تم العثور على ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}) في قاعدة البيانات، لكن سجله لا يحتوي على أي بيانات مالية حقيقية. لم يتمكن النظام أيضًا من استخراج بيانات صالحة من مستند إثبات العمل.`
+                              : `${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}) was found in the database, but their record has no real financial data on file — and no usable data could be extracted from the employment-proof document either.`}
+                          </p>
+                          <p>
+                            {language === 'ar'
+                              ? 'يرجى إعادة المحاولة برفع صورة أوضح، أو إدخال البيانات يدويًا والإقرار بأن هذا الملف يتطلب مراجعة لاحقة.'
+                              : 'Please retry with a clearer image, or acknowledge below that this profile needs manual follow-up and enter the real values later.'}
+                          </p>
+                          {employmentFile && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleExtractEmployment}
+                              disabled={employmentExtracting}
+                            >
+                              {employmentExtracting ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  {language === 'ar' ? 'جارٍ إعادة المحاولة...' : 'Retrying...'}
+                                </>
+                              ) : language === 'ar' ? (
+                                'إعادة محاولة الاستخراج'
+                              ) : (
+                                'Retry extraction'
+                              )}
+                            </Button>
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
                   {salaryMismatchDetected && (
                     <Alert className="border-warning/50 bg-warning/10 text-foreground">
@@ -1799,12 +2091,40 @@ export const Documents: React.FC = () => {
                     </Alert>
                   )}
 
-                  {financialProfile.source !== 'unresolved_needs_review' && (
+                  {/* Confirms — clearly, as a positive info banner rather
+                      than a buried secondary action — that the financial
+                      profile below came from the employment-proof document
+                      itself (no database match existed). Staff can still
+                      reject it if the document looks wrong. */}
+                  {financialProfile.source === 'employment_proof_extracted' && (
+                    <Alert className="border-info/40 bg-info/10 text-foreground">
+                      <Briefcase className="h-4 w-4 text-info" />
+                      <AlertTitle>
+                        {language === 'ar'
+                          ? 'يتم استخدام البيانات المستخرجة من إثبات العمل'
+                          : 'Using data extracted from the employment proof'}
+                      </AlertTitle>
+                      <AlertDescription className="space-y-2">
+                        <p>
+                          {language === 'ar'
+                            ? 'لم يتم العثور على سجل مطابق في قاعدة البيانات، لذلك تُستخدم القيم الواردة في مستند إثبات العمل نفسه أدناه بدلاً من ذلك.'
+                            : "No matching database record was found, so the values from the employment-proof document itself are being used below instead."}
+                        </p>
+                        <Button size="sm" variant="ghost" onClick={forceMarkFinancialProfileUnresolved}>
+                          {language === 'ar'
+                            ? 'لا يبدو هذا صحيحًا — وضع علامة "يتطلب مراجعة" بدلاً من ذلك'
+                            : "This doesn't look right — mark as needs review instead"}
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {!financialProfileNeedsReview && (
                     <div className="rounded-lg border border-border divide-y divide-border">
                       {[
                         {
                           label: language === 'ar' ? 'الدخل الشهري' : 'Monthly Income',
-                          value: financialProfile.monthlyIncome.toLocaleString(),
+                          value: `${financialProfile.monthlyIncome.toLocaleString()} ${financialProfile.salaryCurrency}`,
                         },
                         {
                           label: language === 'ar' ? 'المصاريف الشهرية' : 'Monthly Expenses',
@@ -1818,6 +2138,10 @@ export const Documents: React.FC = () => {
                           label: language === 'ar' ? 'نوع التوظيف' : 'Employment Type',
                           value: financialProfile.employmentType,
                         },
+                        {
+                          label: language === 'ar' ? 'الدور الوظيفي' : 'Job Role',
+                          value: financialProfile.jobRole || (language === 'ar' ? 'غير متوفر' : 'Not available'),
+                        },
                       ].map((row) => (
                         <div key={row.label} className="flex items-center justify-between gap-4 px-4 py-2">
                           <span className="text-sm text-muted-foreground">{row.label}</span>
@@ -1830,7 +2154,7 @@ export const Documents: React.FC = () => {
                     </div>
                   )}
 
-                  {financialProfile.source === 'unresolved_needs_review' && (
+                  {financialProfileNeedsReview && (
                     <div className="flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/5 p-3">
                       <Checkbox
                         id="unresolved-financial-ack"
@@ -1848,8 +2172,8 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 4: Sign & Print */}
-              {accountStep === 4 && (
+              {/* Step 5: Sign & Print */}
+              {accountStep === 5 && (
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">
                     {language === 'ar'
@@ -1949,8 +2273,8 @@ export const Documents: React.FC = () => {
                 </div>
               )}
 
-              {/* Step 5: Complete */}
-              {accountStep === 5 &&
+              {/* Step 6: Complete */}
+              {accountStep === 6 &&
                 (accountSubmitted ? (
                   <div className="flex flex-col items-center text-center gap-4 py-4">
                     <div className={cn('p-4 rounded-full', customerWasNew ? 'bg-success/10' : 'bg-info/10')}>
@@ -2010,6 +2334,16 @@ export const Documents: React.FC = () => {
                         </p>
                       </div>
                     )}
+                    {newCustomerRecord?.category === 'unemployed' && (
+                      <div className="w-full flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-start">
+                        <UserX className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-foreground">
+                          {language === 'ar'
+                            ? 'هذا العميل مصنّف كغير موظف وغير مؤهل للتقدم بطلب قرض.'
+                            : 'This customer is classified as unemployed and is not eligible to apply for a loan.'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -2051,7 +2385,7 @@ export const Documents: React.FC = () => {
 
               {/* Footer actions */}
               <div className="flex items-center justify-between gap-2 pt-2">
-                {accountStep < 5 ? (
+                {accountStep < 6 ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -2060,11 +2394,11 @@ export const Documents: React.FC = () => {
                   >
                     {language === 'ar' ? 'إلغاء' : 'Cancel'}
                   </Button>
-                ) : accountStep === 5 && !accountSubmitted ? (
+                ) : accountStep === 6 && !accountSubmitted ? (
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setAccountStep(4)}
+                    onClick={() => setAccountStep(5)}
                     disabled={submitting}
                   >
                     {language === 'ar' ? 'رجوع' : 'Back'}
@@ -2080,12 +2414,22 @@ export const Documents: React.FC = () => {
                     </Button>
                   )}
                   {accountStep === 3 && (
-                    <Button type="button" variant="outline" onClick={() => setAccountStep(2)} disabled={employmentExtracting}>
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(2)}>
                       {language === 'ar' ? 'رجوع' : 'Back'}
                     </Button>
                   )}
                   {accountStep === 4 && (
-                    <Button type="button" variant="outline" onClick={() => setAccountStep(3)} disabled={generatingPdf}>
+                    <Button type="button" variant="outline" onClick={() => setAccountStep(3)} disabled={employmentExtracting}>
+                      {language === 'ar' ? 'رجوع' : 'Back'}
+                    </Button>
+                  )}
+                  {accountStep === 5 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setAccountStep(employmentStatus === 'unemployed' ? 3 : 4)}
+                      disabled={generatingPdf}
+                    >
                       {language === 'ar' ? 'رجوع' : 'Back'}
                     </Button>
                   )}
@@ -2120,7 +2464,18 @@ export const Documents: React.FC = () => {
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 3 && employmentFile && !employmentDocumentId && !employmentExtractError && (
+                  {accountStep === 3 && (
+                    <Button
+                      type="button"
+                      className="gradient-bg gap-2"
+                      onClick={goToEmploymentProofOrSkip}
+                      disabled={!employmentStatus}
+                    >
+                      {language === 'ar' ? 'متابعة' : 'Continue'}
+                      <StartArrow className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {accountStep === 4 && employmentFile && !employmentDocumentId && !employmentExtractError && (
                     <Button
                       type="button"
                       className="gradient-bg gap-2"
@@ -2140,7 +2495,7 @@ export const Documents: React.FC = () => {
                       )}
                     </Button>
                   )}
-                  {accountStep === 3 && (employmentDocumentId || !employmentFile) && (
+                  {accountStep === 4 && (employmentDocumentId || !employmentFile) && (
                     <Button
                       type="button"
                       className="gradient-bg gap-2"
@@ -2151,13 +2506,13 @@ export const Documents: React.FC = () => {
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 4 && generatedPdfUrl && (
+                  {accountStep === 5 && generatedPdfUrl && (
                     <Button type="button" className="gradient-bg gap-2" onClick={goToCompleteStep}>
                       {language === 'ar' ? 'متابعة' : 'Continue'}
                       <StartArrow className="h-4 w-4" />
                     </Button>
                   )}
-                  {accountStep === 5 && !accountSubmitted && (
+                  {accountStep === 6 && !accountSubmitted && (
                     <Button
                       type="button"
                       className="gradient-bg gap-2"
@@ -2177,7 +2532,7 @@ export const Documents: React.FC = () => {
                       )}
                     </Button>
                   )}
-                  {accountStep === 5 && accountSubmitted && (
+                  {accountStep === 6 && accountSubmitted && (
                     <Button type="button" className="gradient-bg" onClick={closeAccountModal}>
                       {language === 'ar' ? 'إغلاق' : 'Close'}
                     </Button>

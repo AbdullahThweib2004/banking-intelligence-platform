@@ -18,7 +18,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.employment_extractor import _parse_salary  # noqa: E402
+from services.employment_extractor import (  # noqa: E402
+    _parse_currency,
+    _parse_employment_status,
+    _parse_salary,
+)
 
 
 class TestParseSalary(unittest.TestCase):
@@ -44,6 +48,31 @@ class TestParseSalary(unittest.TestCase):
 
     def test_zero_is_a_valid_salary_not_a_missing_value(self):
         self.assertEqual(_parse_salary(0), 0.0)
+
+
+class TestParseCurrency(unittest.TestCase):
+    def test_accepts_supported_currencies_case_insensitively(self):
+        self.assertEqual(_parse_currency("ILS"), "ILS")
+        self.assertEqual(_parse_currency("usd"), "USD")
+        self.assertEqual(_parse_currency(" Jod "), "JOD")
+
+    def test_rejects_unsupported_or_missing_currency_rather_than_guessing(self):
+        self.assertEqual(_parse_currency("GBP"), "")
+        self.assertEqual(_parse_currency(""), "")
+        self.assertEqual(_parse_currency(None), "")
+        self.assertEqual(_parse_currency("dollars"), "")  # model must say USD, not prose
+
+
+class TestParseEmploymentStatus(unittest.TestCase):
+    def test_accepts_known_statuses_case_insensitively(self):
+        self.assertEqual(_parse_employment_status("Employed"), "employed")
+        self.assertEqual(_parse_employment_status("SELF-EMPLOYED"), "self-employed")
+        self.assertEqual(_parse_employment_status("business"), "business")
+
+    def test_rejects_hallucinated_or_missing_status(self):
+        self.assertEqual(_parse_employment_status("retired"), "")
+        self.assertEqual(_parse_employment_status(""), "")
+        self.assertEqual(_parse_employment_status(None), "")
 
 
 if __name__ == "__main__":

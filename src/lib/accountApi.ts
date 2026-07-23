@@ -200,6 +200,8 @@ export interface EmploymentExtractedFields {
   employer_name?: string;
   job_title?: string;
   monthly_salary?: number | null;
+  /** 'ILS' | 'USD' | 'JOD', or '' if not stated/determinable on the document. */
+  currency?: string;
   employment_status?: string;
   issue_date?: string;
   confidence?: number;

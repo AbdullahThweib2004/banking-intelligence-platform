@@ -208,16 +208,28 @@ async def extract_employment_fields_endpoint(
     _role: str = Depends(require_account_opening_role),
 ):
     """Parse employer/salary fields from a previously OCR'd employment-proof document."""
+    # Confirms this endpoint was actually reached for this document_id — the
+    # first thing to check when a customer's extracted data doesn't show up
+    # is whether this line appears in the logs at all.
+    logger.info("[extract-employment-fields] called for document_id=%s", document_id)
+
     doc = get_document(document_id)
     if not doc:
+        logger.warning("[extract-employment-fields] document_id=%s not found in store", document_id)
         raise HTTPException(status_code=404, detail="Document not found.")
     if doc.doc_type != "employment_proof":
+        logger.warning(
+            "[extract-employment-fields] document_id=%s has doc_type=%s, expected employment_proof",
+            document_id,
+            doc.doc_type,
+        )
         raise HTTPException(
             status_code=400,
             detail="This document was not uploaded as a proof of employment.",
         )
 
     if not doc.raw_text.strip():
+        logger.warning("[extract-employment-fields] document_id=%s has empty OCR text", document_id)
         raise HTTPException(
             status_code=422,
             detail="Could not read the document clearly. Please upload a clearer photo or scan.",
@@ -230,7 +242,7 @@ async def extract_employment_fields_endpoint(
         # with the warning so the UI requires manual entry, same pattern as
         # the ID pipeline's own "AI recovery unavailable" fallback.
         logger.warning(
-            "[extract-employment-fields] document_id=%s | extraction failed: %s",
+            "[extract-employment-fields] document_id=%s | extraction failed, returning empty fields: %s",
             document_id,
             warning,
         )
@@ -241,6 +253,7 @@ async def extract_employment_fields_endpoint(
             "employer_name": "",
             "job_title": "",
             "monthly_salary": None,
+            "currency": "",
             "employment_status": "",
             "issue_date": "",
             "confidence": 0,
@@ -248,11 +261,16 @@ async def extract_employment_fields_endpoint(
         }
 
     logger.info(
-        "[extract-employment-fields] document_id=%s | employer=%s salary=%s status=%s confidence=%.1f",
+        "[extract-employment-fields] document_id=%s | SUCCESS | full_name=%s employer=%s job_title=%s "
+        "salary=%s currency=%s status=%s issue_date=%s confidence=%.1f",
         document_id,
+        parsed.full_name,
         parsed.employer_name,
+        parsed.job_title,
         parsed.monthly_salary,
+        parsed.currency,
         parsed.employment_status,
+        parsed.issue_date,
         parsed.confidence,
     )
 
@@ -263,6 +281,7 @@ async def extract_employment_fields_endpoint(
         "employer_name": parsed.employer_name,
         "job_title": parsed.job_title,
         "monthly_salary": parsed.monthly_salary,
+        "currency": parsed.currency,
         "employment_status": parsed.employment_status,
         "issue_date": parsed.issue_date,
         "confidence": parsed.confidence,

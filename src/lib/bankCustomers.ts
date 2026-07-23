@@ -27,6 +27,10 @@ export interface BankCustomerRecord {
   restriction_reason: string | null;
   /** Provenance of the financial-profile fields above — see ResolvedFinancialProfile. */
   financial_profile_source: string;
+  /** Currency the salary/income figures are stated in ('ILS' | 'USD' | 'JOD'). */
+  salary_currency: string;
+  /** Job title/role from the employment contract (e.g. "Manager"), if available. */
+  job_role: string | null;
   created_at: string;
 }
 
@@ -50,6 +54,8 @@ export interface ResolvedFinancialProfile {
   employmentType: string;
   loanAmount: number;
   loanPurpose: string;
+  salaryCurrency: string;
+  jobRole: string | null;
   source: FinancialProfileSource;
 }
 
@@ -71,6 +77,8 @@ export const UNRESOLVED_FINANCIAL_PROFILE: ResolvedFinancialProfile = {
   employmentType: 'unknown',
   loanAmount: 0,
   loanPurpose: 'unknown',
+  salaryCurrency: 'ILS',
+  jobRole: null,
   source: 'unresolved_needs_review',
 };
 
@@ -142,6 +150,8 @@ async function insertBankCustomer(input: {
       loan_amount: profile.loanAmount,
       loan_purpose: profile.loanPurpose,
       financial_profile_source: profile.source,
+      salary_currency: profile.salaryCurrency,
+      job_role: profile.jobRole,
     })
     .select('*')
     .single();
@@ -201,6 +211,8 @@ async function refreshStaleFinancialProfile(
       loan_amount: newProfile.loanAmount,
       loan_purpose: newProfile.loanPurpose,
       financial_profile_source: newProfile.source,
+      salary_currency: newProfile.salaryCurrency,
+      job_role: newProfile.jobRole,
     })
     .eq('id', existing.id)
     .select('*')

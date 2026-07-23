@@ -43,7 +43,7 @@ Set these in **every environment** where account opening runs (local, staging, p
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` | **Recommended** | OpenRouter API key for employment-proof field extraction (payslip/salary-certificate OCR text → structured fields). ID-document extraction does **not** use this — it's regex/OCR-only (`services/field_extraction.py`), since a national ID card has a fixed, standard layout. Without this key, employment-proof extraction returns an empty result with a warning, requiring manual entry. |
-| `EMPLOYMENT_EXTRACT_MODEL` | Optional | OpenRouter model id for employment-proof extraction (default: `krea/krea-2-medium`) |
+| `EMPLOYMENT_EXTRACT_MODEL` | Optional | OpenRouter model id for employment-proof extraction (default: `openai/gpt-4o-mini`) |
 | `OPENROUTER_HTTP_REFERER` | Optional | Referer header for OpenRouter (default: `http://localhost:8080`) |
 
 ### Where to configure
