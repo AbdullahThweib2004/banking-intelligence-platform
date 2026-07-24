@@ -1949,10 +1949,17 @@ export const Documents: React.FC = () => {
                         <AlertTitle>
                           {language === 'ar' ? 'تم العثور على بيانات مالية حقيقية' : 'Real financial data found'}
                         </AlertTitle>
-                        <AlertDescription>
-                          {language === 'ar'
-                            ? `تم استرجاعها من قاعدة البيانات لـ ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}).`
-                            : `Retrieved from the database for ${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}).`}
+                        <AlertDescription className="space-y-1">
+                          <p>
+                            {language === 'ar'
+                              ? `تم استرجاعها من قاعدة البيانات لـ ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}).`
+                              : `Retrieved from the database for ${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}).`}
+                          </p>
+                          <p className="font-medium">
+                            {language === 'ar'
+                              ? `هذا يعني أن هذا الرقم القومي مطابق لعميل موجود بالفعل — سيتم إتمام هذه العملية باستخدام حسابه الحالي ${matchOutcome.customer.account_number}، ولن يتم إنشاء رقم حساب جديد.`
+                              : `This means this national ID matches an existing customer — completing this process will reuse their existing account ${matchOutcome.customer.account_number}, not create a new account number.`}
+                          </p>
                         </AlertDescription>
                       </Alert>
                     )}
@@ -1980,6 +1987,11 @@ export const Documents: React.FC = () => {
                             {language === 'ar'
                               ? `تم العثور على ${matchOutcome.customer.customer_name} (حساب ${matchOutcome.customer.account_number}) في قاعدة البيانات، لكن سجله لا يحتوي على أي بيانات مالية حقيقية. لم يتمكن النظام أيضًا من استخراج بيانات صالحة من مستند إثبات العمل.`
                               : `${matchOutcome.customer.customer_name} (account ${matchOutcome.customer.account_number}) was found in the database, but their record has no real financial data on file — and no usable data could be extracted from the employment-proof document either.`}
+                          </p>
+                          <p className="font-medium">
+                            {language === 'ar'
+                              ? `تنبيه: سيتم إتمام هذه العملية باستخدام الحساب الحالي ${matchOutcome.customer.account_number} (لن يتم إنشاء رقم حساب جديد)، لأن هذا الرقم القومي مطابق بالفعل لهذا العميل.`
+                              : `Note: completing this process will reuse the existing account ${matchOutcome.customer.account_number} (no new account number will be created), because this national ID already matches this customer.`}
                           </p>
                           <p>
                             {language === 'ar'
