@@ -119,6 +119,8 @@ for f in \
 done
 docker cp "${MIGRATIONS_DIR}/20260724100000_fix_and_guard_bank_customers_account_sequence.sql" \
   "${CONTAINER}:/tmp/20260724100000_fix_and_guard_bank_customers_account_sequence.sql"
+docker cp "${MIGRATIONS_DIR}/20260724110000_drop_rogue_set_account_number_trigger.sql" \
+  "${CONTAINER}:/tmp/20260724110000_drop_rogue_set_account_number_trigger.sql"
 
 echo
 echo "=== Scenario 1: stray out-of-family row present (reproduces the BOP-200018 report) ==="
@@ -145,7 +147,54 @@ check "first employed customer after the fix" "BOP-100013" "$(next_employed 2220
 check "next employed customer" "BOP-100014" "$(next_employed 333000333000)"
 
 echo
-echo "=== Scenario 3: the guardrail rejects any future out-of-family account number ==="
+echo "=== Scenario 3: a second, rogue trigger was found on the live project ==="
+echo "    ('set_account_number' / generate_account_number(): an undocumented '+100000'"
+echo "    offset using a totally separate sequence, never created by any migration here)."
+echo "    It fires alphabetically BEFORE this repo's own trigger and always wins, which is"
+echo "    why resetting bank_customers_account_number_seq alone never actually fixed anything."
+echo "    Reproduces this, then confirms dropping it (20260724110000) resolves it."
+psql -c "
+CREATE SEQUENCE IF NOT EXISTS account_number_seq;
+SELECT setval('account_number_seq', 100019, true);
+
+CREATE OR REPLACE FUNCTION public.generate_account_number()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS \$function\$
+BEGIN
+  IF NEW.account_number IS NULL THEN
+    NEW.account_number := 'BOP-' || (100000 + nextval('account_number_seq'));
+  END IF;
+  RETURN NEW;
+END;
+\$function\$;
+
+CREATE TRIGGER set_account_number
+  BEFORE INSERT ON public.bank_customers
+  FOR EACH ROW
+  EXECUTE FUNCTION public.generate_account_number();
+" >/dev/null
+
+rogue_output=$(docker exec -u postgres "$CONTAINER" psql -c "
+  INSERT INTO bank_customers (customer_name, national_id, employment_type, loan_purpose)
+  VALUES ('Reproduce Rogue Bug', '123123123123', 'employed', 'personal')
+  RETURNING account_number;
+" 2>&1 || true)
+check_rejected "rogue trigger still produces an out-of-family number (guardrail catches it)" "$rogue_output"
+
+echo "  Applying 20260724110000_drop_rogue_set_account_number_trigger.sql..."
+psql -f "/tmp/20260724110000_drop_rogue_set_account_number_trigger.sql" >/dev/null
+
+remaining_triggers=$(psql_q "
+  SELECT COUNT(*) FROM pg_trigger
+  WHERE tgrelid = 'public.bank_customers'::regclass AND NOT tgisinternal;
+")
+check "exactly one trigger remains on bank_customers after the fix" "1" "$remaining_triggers"
+check "employed customer created correctly after dropping the rogue trigger" "BOP-100015" "$(next_employed 555666777001)"
+check "next employed customer" "BOP-100016" "$(next_employed 555666777002)"
+
+echo
+echo "=== Scenario 4: the guardrail rejects any future out-of-family account number ==="
 bad_insert_output=$(docker exec -u postgres "$CONTAINER" psql -c "
   INSERT INTO bank_customers (account_number, customer_name, national_id, employment_type, loan_purpose)
   VALUES ('BOP-999999', 'Guardrail Test', '000000000000', 'employed', 'personal');
@@ -158,12 +207,13 @@ check "valid explicit family value still allowed (BOP-100050)" "BOP-100050" "$(p
 ")"
 
 echo
-echo "=== Scenario 4: fix migration is idempotent (safe to re-run) ==="
+echo "=== Scenario 5: fix migrations are idempotent (safe to re-run) ==="
 psql -f "/tmp/20260724100000_fix_and_guard_bank_customers_account_sequence.sql" >/dev/null
+psql -f "/tmp/20260724110000_drop_rogue_set_account_number_trigger.sql" >/dev/null
 check "sequence correctly re-synced after re-running the fix" "100050" "$(seq_value)"
 
 echo
-echo "=== Scenario 5: concurrent inserts produce no duplicates or skips ==="
+echo "=== Scenario 6: concurrent inserts produce no duplicates or skips ==="
 for i in $(seq 1 10); do
   docker exec -u postgres "$CONTAINER" psql -t -A -v ON_ERROR_STOP=1 -c "
     INSERT INTO bank_customers (customer_name, national_id, employment_type, loan_purpose)
@@ -177,7 +227,7 @@ check "duplicate account numbers after 10 concurrent inserts" "0" "$dupes"
 rm -f /tmp/verify_concurrent_*.log
 
 echo
-echo "=== Scenario 6: unemployed-customer sequence is fully independent ==="
+echo "=== Scenario 7: unemployed-customer sequence is fully independent ==="
 u1=$(psql_q "INSERT INTO unemployed_customers (customer_name, national_id) VALUES ('Unemployed One', '777000000001') RETURNING account_number;")
 check "first unemployed customer" "BOP-1" "$u1"
 u2=$(psql_q "INSERT INTO unemployed_customers (customer_name, national_id) VALUES ('Unemployed Two', '777000000002') RETURNING account_number;")

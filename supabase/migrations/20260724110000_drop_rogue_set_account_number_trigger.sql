@@ -1,0 +1,75 @@
+-- ============================================================================
+-- Root cause of the recurring BOP-200013 / BOP-200018 / BOP-200019 incidents,
+-- finally found: bank_customers had TWO BEFORE INSERT triggers generating
+-- account_number, not one.
+--
+--   1. trg_generate_bank_customer_account_number (this repo's — see
+--      20260711100000_bank_customers_account_sequence.sql): correct logic,
+--      uses public.bank_customers_account_number_seq.
+--
+--   2. set_account_number: NOT created by any migration in this repo — it
+--      was created directly on the live project outside of version control
+--      (most likely via the Supabase Table Editor UI at some point). Its
+--      function:
+--
+--        CREATE OR REPLACE FUNCTION public.generate_account_number()
+--        RETURNS trigger LANGUAGE plpgsql AS $function$
+--        BEGIN
+--          IF NEW.account_number IS NULL THEN
+--            NEW.account_number := 'BOP-' || (100000 + nextval('account_number_seq'));
+--          END IF;
+--          RETURN NEW;
+--        END;
+--        $function$
+--
+--      uses a COMPLETELY SEPARATE sequence (account_number_seq, not
+--      bank_customers_account_number_seq) and has a "+ 100000" offset baked
+--      directly into it — the actual source of every BOP-2xxxxx number ever
+--      seen.
+--
+-- Postgres fires same-timing triggers on a table in ALPHABETICAL ORDER BY
+-- NAME. "set_account_number" sorts before
+-- "trg_generate_bank_customer_account_number" ('s' < 't'), so the rogue
+-- trigger always ran FIRST and filled in NEW.account_number — meaning this
+-- repo's own trigger's `IF NEW.account_number IS NULL` check was never true
+-- in practice. It has likely never actually fired. Every previous fix to
+-- bank_customers_account_number_seq (20260711120000, 20260724100000) was
+-- therefore fixing a sequence that was never the one actually in use —
+-- which is exactly why resetting it kept appearing not to work.
+--
+-- THIS MIGRATION removes the rogue trigger so this repo's own,
+-- correctly-scoped trigger is finally the only one running. The rogue
+-- function and its sequence are intentionally left in place (unused,
+-- harmless) rather than dropped — this repo has no visibility into whether
+-- anything else on the live project references them, and leaving orphaned,
+-- inert objects behind is far lower-risk than a DROP ... CASCADE against
+-- unknown dependents. They can be removed manually later once confirmed
+-- safe (see the optional check at the bottom).
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS set_account_number ON public.bank_customers;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ============================================================================
+-- Verify (optional, run in the SQL Editor):
+--
+--   -- Only the correct trigger should remain:
+--   SELECT tgname, tgenabled, tgrelid::regclass
+--   FROM pg_trigger
+--   WHERE tgrelid = 'public.bank_customers'::regclass AND NOT tgisinternal;
+--   -- expect exactly one row: trg_generate_bank_customer_account_number
+--
+--   -- Confirm a real insert now gets a correct BOP-1NNNNN number:
+--   -- (uses a throwaway national_id — delete this test row afterward)
+--   -- INSERT INTO public.bank_customers
+--   --   (customer_name, national_id, employment_type, loan_purpose)
+--   -- VALUES ('Trigger Fix Verification', '000000000001', 'employed', 'personal')
+--   -- RETURNING account_number;
+--
+--   -- Once you've confirmed nothing else on the project references the
+--   -- rogue objects, they can be removed entirely (optional, not required
+--   -- for the fix — the trigger drop above is what actually matters):
+--   -- DROP FUNCTION IF EXISTS public.generate_account_number();
+--   -- DROP SEQUENCE IF EXISTS public.account_number_seq;
+-- ============================================================================
