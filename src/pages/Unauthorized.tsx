@@ -10,7 +10,7 @@ import { ShieldAlert } from 'lucide-react';
 const roleLabels: Record<string, { en: string; ar: string }> = {
   branch_employee: { en: 'Branch Employee', ar: 'موظف الفرع' },
   branch_manager: { en: 'Branch Manager', ar: 'مدير الفرع' },
-  risk_department: { en: 'Risk Department', ar: 'دائرة المخاطر' },
+  facilities_department: { en: 'Facilities Department', ar: 'دائرة التسهيلات' },
 };
 
 export const Unauthorized: React.FC = () => {

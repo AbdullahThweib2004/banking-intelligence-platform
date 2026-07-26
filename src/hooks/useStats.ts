@@ -5,13 +5,13 @@ import { supabase } from '@/integrations/supabase/client';
  * GLOBAL platform statistics for the top summary cards.
  *
  * These numbers are intentionally NOT filtered by the current user or role:
- * every role (branch_employee, branch_manager, risk_department) must see the
+ * every role (branch_employee, branch_manager, facilities_department) must see the
  * exact same totals.
  *
  * Primary data source is the `get_platform_stats()` Postgres function
  * (SECURITY DEFINER) which bypasses RLS and returns only aggregates. If that
  * function has not been deployed yet, we fall back to direct count queries so
- * the pages still render real data (fully global for manager/risk; limited to
+ * the pages still render real data (fully global for manager/facilities; limited to
  * own rows for an employee, since RLS applies to the fallback path).
  */
 
