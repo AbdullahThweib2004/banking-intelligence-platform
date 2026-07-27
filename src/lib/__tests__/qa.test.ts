@@ -38,6 +38,27 @@ describe('roles', () => {
     assert.equal(canOpenAccount(ROLES.RISK), false);
     assert.equal(canOpenAccount(ROLES.EMPLOYEE), true);
   });
+
+  it('Audit is a fully separate account: its own dashboard routes are exclusive to it', () => {
+    assert.equal(canAccess(ROLES.AUDIT, '/audit-approvals'), true);
+    assert.equal(canAccess(ROLES.AUDIT, '/audit-monitoring'), true);
+    // No other role may reach Audit's own pages.
+    assert.equal(canAccess(ROLES.RISK, '/audit-approvals'), false);
+    assert.equal(canAccess(ROLES.MANAGER, '/audit-approvals'), false);
+    assert.equal(canAccess(ROLES.EMPLOYEE, '/audit-approvals'), false);
+    assert.equal(canAccess(ROLES.RISK, '/audit-monitoring'), false);
+    assert.equal(canAccess(ROLES.MANAGER, '/audit-monitoring'), false);
+  });
+
+  it('Audit cannot access Risk/Manager\'s shared Approvals page, and vice versa', () => {
+    assert.equal(canAccess(ROLES.AUDIT, '/approvals'), false);
+    assert.equal(canAccess(ROLES.RISK, '/approvals'), true);
+    assert.equal(canAccess(ROLES.MANAGER, '/approvals'), true);
+  });
+
+  it('Audit has its own AI Assistant / chat access, same as other roles', () => {
+    assert.equal(canAccess(ROLES.AUDIT, '/ai-assistant'), true);
+  });
 });
 
 describe('creditScoring', () => {

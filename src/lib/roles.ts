@@ -12,11 +12,15 @@ export const ROUTE_PERMISSIONS: Record<string, Role[]> = {
   '/dashboard':       ['branch_employee', 'branch_manager', 'risk_department', 'audit_department'],
   '/credit-risk':     ['branch_employee', 'branch_manager', 'risk_department'],
   '/documents':       ['branch_employee', 'branch_manager', 'risk_department'],
-  '/ai-assistant':    ['branch_employee', 'branch_manager', 'risk_department'],
-  '/approvals':       ['branch_employee', 'branch_manager', 'risk_department', 'audit_department'],
+  '/ai-assistant':    ['branch_employee', 'branch_manager', 'risk_department', 'audit_department'],
+  '/approvals':       ['branch_employee', 'branch_manager', 'risk_department'],
   '/user-management': ['branch_manager'],
   '/audit-log':       ['risk_department'],
   '/modification-requests': ['branch_manager', 'risk_department'],
+  // Audit's own dedicated dashboard — a fully separate account/role, never
+  // shared with Risk's /approvals page.
+  '/audit-monitoring': ['audit_department'],
+  '/audit-approvals':  ['audit_department'],
 };
 
 export function canAccess(role: Role | null, path: string): boolean {

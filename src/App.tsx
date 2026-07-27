@@ -19,6 +19,8 @@ import Approvals from "./pages/Approvals";
 import AuditLog from "./pages/AuditLog";
 import ModificationRequests from "./pages/ModificationRequests";
 import UserManagement from "./pages/UserManagement";
+import AuditMonitoring from "./pages/AuditMonitoring";
+import AuditApprovals from "./pages/AuditApprovals";
 import Unauthorized from "./pages/Unauthorized";
 import NotFound from "./pages/NotFound";
 import { HelpProvider } from "@/components/help";
@@ -104,6 +106,28 @@ const DASHBOARD_ROUTES: DashboardRouteConfig[] = [
       <RequireAuth>
         <ProtectedRoute allowedRoles={[ROLES.MANAGER]}>
           <UserManagement />
+        </ProtectedRoute>
+      </RequireAuth>
+    ),
+  },
+  // Audit's own dedicated dashboard — fully separate account/role, no route
+  // overlap with Risk's/Manager's Approvals page.
+  {
+    path: "/audit-monitoring",
+    element: (
+      <RequireAuth>
+        <ProtectedRoute allowedRoles={[ROLES.AUDIT]}>
+          <AuditMonitoring />
+        </ProtectedRoute>
+      </RequireAuth>
+    ),
+  },
+  {
+    path: "/audit-approvals",
+    element: (
+      <RequireAuth>
+        <ProtectedRoute allowedRoles={[ROLES.AUDIT]}>
+          <AuditApprovals />
         </ProtectedRoute>
       </RequireAuth>
     ),

@@ -28,6 +28,8 @@ import {
   TrendingUp,
   ChevronLeft,
   ChevronRight,
+  Gauge,
+  FileCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BoPLogo } from '@/components/BoPLogo';
@@ -54,6 +56,8 @@ const navItems: NavItem[] = [
   { icon: FileEdit, labelKey: 'nav.modificationRequests', path: '/modification-requests' },
   { icon: ClipboardList, labelKey: 'nav.auditLog', path: '/audit-log' },
   { icon: Users, labelKey: 'nav.users', path: '/user-management' },
+  { icon: Gauge, labelKey: 'nav.auditMonitoring', path: '/audit-monitoring' },
+  { icon: FileCheck, labelKey: 'nav.auditApprovals', path: '/audit-approvals' },
 ];
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {

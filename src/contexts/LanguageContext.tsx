@@ -20,6 +20,8 @@ const translations: Translations = {
   'nav.auditLog': { en: 'Audit Log', ar: 'سجل المراجعة' },
   'nav.modificationRequests': { en: 'Modification Requests', ar: 'طلبات التعديل' },
   'nav.users': { en: 'User Management', ar: 'إدارة المستخدمين' },
+  'nav.auditMonitoring': { en: 'Audit Monitoring', ar: 'مراقبة التدقيق' },
+  'nav.auditApprovals': { en: 'Loan Approvals', ar: 'موافقات القروض' },
   'nav.settings': { en: 'Settings', ar: 'الإعدادات' },
   'nav.logout': { en: 'Logout', ar: 'تسجيل الخروج' },
   
