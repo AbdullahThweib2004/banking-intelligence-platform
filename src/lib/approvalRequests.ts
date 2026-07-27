@@ -51,6 +51,7 @@ export interface ApprovalRequest {
   riskDecisionAt?: string | null;
   auditDecisionByName?: string | null;
   auditDecisionAt?: string | null;
+  auditDecisionNote?: string | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table.
@@ -89,6 +90,7 @@ export interface ApprovalRow {
   risk_decision_at?: string | null;
   audit_decision_by?: string | null;
   audit_decision_at?: string | null;
+  audit_decision_note?: string | null;
 }
 
 // Parse the saved risk explanation snapshot from a row without recalculating.
@@ -138,6 +140,7 @@ export const mapApprovalRow = (
   riskDecisionAt: row.risk_decision_at ?? null,
   auditDecisionByName: (row.audit_decision_by && nameById.get(row.audit_decision_by)) || null,
   auditDecisionAt: row.audit_decision_at ?? null,
+  auditDecisionNote: row.audit_decision_note ?? null,
 });
 
 export const getRiskColor = (category?: ApprovalRequest['riskCategory']) => {

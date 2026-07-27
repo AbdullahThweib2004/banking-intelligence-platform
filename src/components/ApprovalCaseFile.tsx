@@ -77,6 +77,14 @@ export function ApprovalCaseFile({ approval, language, blockedMessage }: Approva
             ? `${approval.auditDecisionByName} — ${new Date(approval.auditDecisionAt).toLocaleString()}`
             : (language === 'ar' ? 'لم يُتخذ قرار بعد' : 'No decision yet')}
         </p>
+        {approval.auditDecisionNote && (
+          <p className="pt-1">
+            <span className="text-muted-foreground">
+              {language === 'ar' ? 'ملاحظة التدقيق: ' : 'Audit note: '}
+            </span>
+            <span className="italic">{approval.auditDecisionNote}</span>
+          </p>
+        )}
       </div>
 
       {/* Risk-stage rule engine (DBR/age-at-maturity) + AI insights — same

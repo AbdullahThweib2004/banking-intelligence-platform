@@ -672,6 +672,25 @@ export const Approvals: React.FC = () => {
                             </Badge>
                             <HelpTarget
                               asChild
+                              id={`approvals-view-document-${approval.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'عرض ملف الحالة الكامل' : 'View full case file'}
+                              description={language === 'ar'
+                                ? 'يعرض المستند الموقّع، وسجل الموافقات في كل مرحلة (المدير، المخاطر، التدقيق)، بما في ذلك أي ملاحظة تدقيق نهائية.'
+                                : 'Shows the signed document and every stage\'s decision (Manager, Risk, Audit), including any final Audit note.'}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setDocumentViewerApproval(approval)}
+                                title={language === 'ar' ? 'عرض ملف الحالة الكامل' : 'View full case file'}
+                              >
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
+                            <HelpTarget
+                              asChild
                               id={`approvals-view-${approval.id}`}
                               scope="action"
                               category={language === 'ar' ? 'إجراء' : 'Action'}

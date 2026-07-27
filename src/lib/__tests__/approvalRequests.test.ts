@@ -66,6 +66,15 @@ describe('mapApprovalRow', () => {
     assert.equal(mapped.managerDecisionByName, null);
     assert.equal(mapped.riskDecisionByName, null);
     assert.equal(mapped.auditDecisionByName, null);
+    assert.equal(mapped.auditDecisionNote, null);
+  });
+
+  it('surfaces the Audit decision note so the submitting employee can see why a request was approved/rejected', () => {
+    const mapped = mapApprovalRow(
+      { ...baseRow, audit_decision_note: 'Approved with extra collateral on file.' },
+      new Map()
+    );
+    assert.equal(mapped.auditDecisionNote, 'Approved with extra collateral on file.');
   });
 
   it('preserves every status value used across the workflow, including the Audit-stage ones', () => {

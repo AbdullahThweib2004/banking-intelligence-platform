@@ -125,6 +125,7 @@ export default function AuditApprovals() {
         updated_at: now,
         audit_decision_by: user.id,
         audit_decision_at: now,
+        audit_decision_note: comment.trim() || null,
         // audit_approved is the true final state; approved_at feeds the
         // "Approved Today" / avg-processing-time stats.
         approved_at: newStatus === 'audit_approved' ? now : null,
@@ -137,7 +138,13 @@ export default function AuditApprovals() {
       return;
     }
 
-    setApprovals((prev) => prev.map((a) => (a.id === selectedApproval.id ? { ...a, status: newStatus } : a)));
+    setApprovals((prev) =>
+      prev.map((a) =>
+        a.id === selectedApproval.id
+          ? { ...a, status: newStatus, auditDecisionNote: comment.trim() || null }
+          : a
+      )
+    );
     toast.success(
       actionType === 'approve'
         ? t('Approved. This request is now fully approved.', 'تمت الموافقة النهائية على هذا الطلب.')

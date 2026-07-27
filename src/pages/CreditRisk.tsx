@@ -83,7 +83,7 @@ interface CreditApplication {
   loanAmount: number;
   riskScore: number;
   riskCategory: 'low' | 'medium' | 'high';
-  status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval' | 'pending_branch_manager_approval';
+  status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval' | 'pending_branch_manager_approval' | 'pending_audit_approval' | 'audit_approved';
   employeeId: string;
   savedRiskExplanation: SavedRiskExplanation | null;
 }
@@ -150,6 +150,8 @@ const getStatusColor = (status: CreditApplication['status']) => {
     case 'pending': return 'text-muted-foreground bg-muted border-border';
     case 'awaiting_approval': return 'text-warning bg-warning/10 border-warning/20';
     case 'pending_branch_manager_approval': return 'text-info bg-info/10 border-info/20';
+    case 'pending_audit_approval': return 'text-info bg-info/10 border-info/20';
+    case 'audit_approved': return 'text-success bg-success/10 border-success/20';
   }
 };
 
@@ -1737,6 +1739,8 @@ export const CreditRisk: React.FC = () => {
                         {app.status === 'pending' && (language === 'ar' ? 'قيد المراجعة' : 'Pending')}
                         {app.status === 'awaiting_approval' && (language === 'ar' ? 'بانتظار الموافقة' : 'Awaiting Approval')}
                         {app.status === 'pending_branch_manager_approval' && (language === 'ar' ? 'بانتظار موافقة المدير' : 'Awaiting Manager Approval')}
+                        {app.status === 'pending_audit_approval' && (language === 'ar' ? 'بانتظار التدقيق' : 'Awaiting Audit')}
+                        {app.status === 'audit_approved' && (language === 'ar' ? 'معتمد نهائياً' : 'Fully Approved')}
                       </Badge>
                     </TableCell>
                     <TableCell>
