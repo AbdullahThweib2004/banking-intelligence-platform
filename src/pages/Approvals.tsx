@@ -45,6 +45,7 @@ import { toast } from 'sonner';
 import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRequestDocument } from '@/components/LoanRequestDocument';
+import { canSubmitApproval, evaluateRiskGate } from '@/lib/riskDecisionGate';
 import {
   hasSavedRiskExplanation,
   type SavedRiskExplanation,
@@ -185,6 +186,7 @@ export const Approvals: React.FC = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [actionType, setActionType] = useState<'approve' | 'reject' | 'view' | null>(null);
   const [comment, setComment] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
   const [activeTab, setActiveTab] = useState('pending');
   const [riskExplanationOpen, setRiskExplanationOpen] = useState(false);
   const [riskExplanationApproval, setRiskExplanationApproval] = useState<ApprovalRequest | null>(null);
@@ -247,7 +249,18 @@ export const Approvals: React.FC = () => {
     setActionType(action);
     setIsDialogOpen(true);
     setComment('');
+    setOverrideReason('');
   };
+
+  // Gates Risk's final Approve decision on the already-computed, deterministic
+  // DBR/age-at-maturity rule engine result (src/lib/loanEligibility.ts) — see
+  // src/lib/riskDecisionGate.ts. Only applies to Risk's own decision (not the
+  // Branch Manager gate step, which has no rule-engine result to check yet).
+  const isManagerGateAction = selectedApproval?.status === 'pending_branch_manager_approval';
+  const riskApproveGate =
+    !isManagerGateAction && actionType === 'approve'
+      ? evaluateRiskGate(selectedApproval?.savedRiskExplanation?.risk_derived_features ?? null)
+      : null;
 
   // Eye icon: open the saved risk explanation snapshot (read-only, no recompute).
   const openRiskExplanation = (approval: ApprovalRequest) => {
@@ -274,6 +287,18 @@ export const Approvals: React.FC = () => {
       : (actionType === 'approve' ? 'approved' : 'rejected');
     const now = new Date().toISOString();
 
+    // Risk approving despite a failed DBR/age-at-maturity rule requires a
+    // typed override reason (enforced client-side by disabling the button
+    // below, and re-checked here as defense in depth) — recorded for audit.
+    if (riskApproveGate?.requiresOverrideReason && !canSubmitApproval(riskApproveGate, overrideReason)) {
+      toast.error(
+        language === 'ar'
+          ? 'يجب إدخال سبب تجاوز القاعدة قبل الموافقة.'
+          : 'An override reason is required before approving this request.'
+      );
+      return;
+    }
+
     const { error } = await supabase
       .from('approval_requests')
       .update(
@@ -288,6 +313,13 @@ export const Approvals: React.FC = () => {
               status: newStatus,
               updated_at: now,
               approved_at: newStatus === 'approved' ? now : null,
+              ...(riskApproveGate?.requiresOverrideReason
+                ? {
+                    risk_override_reason: overrideReason.trim(),
+                    risk_override_by: user?.id ?? null,
+                    risk_override_at: now,
+                  }
+                : {}),
             }
       )
       .eq('id', selectedApproval.id);
@@ -318,6 +350,7 @@ export const Approvals: React.FC = () => {
     setIsDialogOpen(false);
     setSelectedApproval(null);
     setActionType(null);
+    setOverrideReason('');
   };
 
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
@@ -691,6 +724,25 @@ export const Approvals: React.FC = () => {
                             )}
                             <HelpTarget
                               asChild
+                              id={`approvals-view-document-${approval.id}`}
+                              scope="action"
+                              category={language === 'ar' ? 'إجراء' : 'Action'}
+                              title={language === 'ar' ? 'عرض المستند الموقّع' : 'View signed document'}
+                              description={language === 'ar'
+                                ? 'يفتح مستند طلب القرض الكامل الموقّع من العميل، نفس المستند الذي راجعه المدير.'
+                                : 'Opens the full signed loan-request document — the same one the Branch Manager reviewed.'}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setDocumentViewerApproval(approval)}
+                                title={language === 'ar' ? 'عرض المستند الموقّع' : 'View signed document'}
+                              >
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                            </HelpTarget>
+                            <HelpTarget
+                              asChild
                               id={`approvals-view-${approval.id}`}
                               scope="action"
                               category={language === 'ar' ? 'إجراء' : 'Action'}
@@ -869,6 +921,46 @@ export const Approvals: React.FC = () => {
                 </div>
               )}
 
+              {/* Rule-engine gate — authoritative pass/fail source, distinct
+                  from any AI narrative shown elsewhere (the "eye" icon's
+                  popup). Only relevant to Risk's own Approve decision. */}
+              {riskApproveGate?.state === 'not_eligible' && (
+                <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                  <p className="text-sm font-medium text-destructive">
+                    {language === 'ar'
+                      ? 'فشل هذا الطلب في قواعد نسبة عبء الدين / العمر عند الاستحقاق:'
+                      : 'This request failed the DBR / age-at-maturity rule engine:'}
+                  </p>
+                  <ul className="list-disc ps-5 text-sm text-destructive">
+                    {riskApproveGate.reasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-destructive">
+                      {language === 'ar'
+                        ? 'سبب تجاوز القاعدة (مطلوب للموافقة)'
+                        : 'Override reason (required to approve)'}
+                    </label>
+                    <Textarea
+                      value={overrideReason}
+                      onChange={(e) => setOverrideReason(e.target.value)}
+                      placeholder={language === 'ar'
+                        ? 'اشرح سبب الموافقة رغم فشل القاعدة...'
+                        : 'Explain why this is being approved despite the failed rule...'}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {riskApproveGate?.state === 'unknown' && (
+                <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+                  {language === 'ar'
+                    ? 'لا تتوفر بيانات محرك القواعد (نسبة عبء الدين / العمر عند الاستحقاق) لهذا الطلب.'
+                    : 'DBR / age-at-maturity rule-engine data is not available for this request.'}
+                </div>
+              )}
+
               {actionType !== 'view' && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
@@ -890,10 +982,11 @@ export const Approvals: React.FC = () => {
               {actionType !== 'view' && (
                 <Button
                   onClick={confirmAction}
+                  disabled={riskApproveGate != null && !canSubmitApproval(riskApproveGate, overrideReason)}
                   className={actionType === 'approve' ? 'bg-success hover:bg-success/90' : 'bg-destructive hover:bg-destructive/90'}
                 >
-                  {actionType === 'approve' 
-                    ? t('approvals.approve') 
+                  {actionType === 'approve'
+                    ? t('approvals.approve')
                     : t('approvals.reject')}
                 </Button>
               )}
@@ -901,11 +994,19 @@ export const Approvals: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Signed loan-request document viewer (Branch Manager gate) */}
+        {/* Signed loan-request document viewer — read-only for everyone; the
+            same document Branch Manager reviewed is now also visible to Risk
+            (status='pending'), with the same Approve/Reject actions. */}
         <Dialog open={documentViewerApproval != null} onOpenChange={(open) => !open && setDocumentViewerApproval(null)}>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{language === 'ar' ? 'مستند طلب القرض' : 'Loan Request Document'}</DialogTitle>
+              <div className="flex items-center justify-between gap-4">
+                <DialogTitle>{language === 'ar' ? 'مستند طلب القرض' : 'Loan Request Document'}</DialogTitle>
+                <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  {language === 'ar' ? 'طباعة / حفظ كـ PDF' : 'Print / Save as PDF'}
+                </Button>
+              </div>
             </DialogHeader>
             {documentViewerApproval && (
               <div className="space-y-4">
@@ -928,7 +1029,8 @@ export const Approvals: React.FC = () => {
                     recommendedAction: documentViewerApproval.savedRiskExplanation?.recommended_action ?? null,
                   }}
                 />
-                {isRole(ROLES.MANAGER) && documentViewerApproval.status === 'pending_branch_manager_approval' && (
+                {((isRole(ROLES.MANAGER) && documentViewerApproval.status === 'pending_branch_manager_approval') ||
+                  (isRole(ROLES.RISK) && documentViewerApproval.status === 'pending')) && (
                   <div className="flex gap-2">
                     <Button
                       className="flex-1 bg-success hover:bg-success/90"
