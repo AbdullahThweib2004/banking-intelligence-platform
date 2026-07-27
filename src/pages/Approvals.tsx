@@ -38,11 +38,13 @@ import {
   AlertTriangle,
   TrendingUp,
   User,
+  FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
+import { LoanRequestDocument } from '@/components/LoanRequestDocument';
 import {
   hasSavedRiskExplanation,
   type SavedRiskExplanation,
@@ -62,11 +64,20 @@ interface ApprovalRequest {
   amount?: number;
   riskScore?: number;
   riskCategory?: 'low' | 'medium' | 'high';
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'pending_branch_manager_approval';
   notes?: string;
   priority: 'normal' | 'high' | 'urgent';
   savedRiskExplanation: SavedRiskExplanation | null;
   reanalysisStatus?: 'pending' | 'completed' | 'failed' | null;
+  // Snapshotted fields needed to render the full signed loan-request document
+  // for the Branch Manager gate step.
+  nationalId?: string | null;
+  monthlyIncome?: number | null;
+  monthlyExpenses?: number | null;
+  existingLoans?: number | null;
+  employmentType?: string | null;
+  salaryCurrency?: string | null;
+  signatureDataUrl?: string | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table.
@@ -92,6 +103,13 @@ interface ApprovalRow {
   result_source?: ResultSource | null;
   assessed_at?: string | null;
   reanalysis_status?: 'pending' | 'completed' | 'failed' | null;
+  national_id?: string | null;
+  monthly_income?: number | null;
+  monthly_expenses?: number | null;
+  existing_loans?: number | null;
+  employment_type?: string | null;
+  salary_currency?: string | null;
+  signature_data_url?: string | null;
 }
 
 // Parse the saved risk explanation snapshot from a row without recalculating.
@@ -128,6 +146,13 @@ const mapRow = (
   priority: row.priority ?? 'normal',
   savedRiskExplanation: parseSavedRiskExplanation(row),
   reanalysisStatus: row.reanalysis_status ?? null,
+  nationalId: row.national_id ?? null,
+  monthlyIncome: row.monthly_income ?? null,
+  monthlyExpenses: row.monthly_expenses ?? null,
+  existingLoans: row.existing_loans ?? null,
+  employmentType: row.employment_type ?? null,
+  salaryCurrency: row.salary_currency ?? null,
+  signatureDataUrl: row.signature_data_url ?? null,
 });
 
 const getRiskColor = (category?: ApprovalRequest['riskCategory']) => {
@@ -163,6 +188,7 @@ export const Approvals: React.FC = () => {
   const [activeTab, setActiveTab] = useState('pending');
   const [riskExplanationOpen, setRiskExplanationOpen] = useState(false);
   const [riskExplanationApproval, setRiskExplanationApproval] = useState<ApprovalRequest | null>(null);
+  const [documentViewerApproval, setDocumentViewerApproval] = useState<ApprovalRequest | null>(null);
 
   const fetchApprovals = useCallback(async () => {
     let query = supabase.from('approval_requests').select('*');
@@ -237,16 +263,33 @@ export const Approvals: React.FC = () => {
       return;
     }
 
-    const newStatus = actionType === 'approve' ? 'approved' : 'rejected';
+    // A row still at the Branch Manager gate has a different transition:
+    // "approve" moves it into risk_department's queue (status='pending',
+    // exactly like any assessment always has), not straight to 'approved'.
+    // "reject" here is a SOFT reject (kept for history), same status value
+    // as risk's own rejection.
+    const isManagerGateDecision = selectedApproval.status === 'pending_branch_manager_approval';
+    const newStatus = isManagerGateDecision
+      ? (actionType === 'approve' ? 'pending' : 'rejected')
+      : (actionType === 'approve' ? 'approved' : 'rejected');
     const now = new Date().toISOString();
 
     const { error } = await supabase
       .from('approval_requests')
-      .update({
-        status: newStatus,
-        updated_at: now,
-        approved_at: newStatus === 'approved' ? now : null,
-      })
+      .update(
+        isManagerGateDecision
+          ? {
+              status: newStatus,
+              updated_at: now,
+              manager_decision_by: user?.id ?? null,
+              manager_decision_at: now,
+            }
+          : {
+              status: newStatus,
+              updated_at: now,
+              approved_at: newStatus === 'approved' ? now : null,
+            }
+      )
       .eq('id', selectedApproval.id);
 
     if (error) {
@@ -278,9 +321,15 @@ export const Approvals: React.FC = () => {
   };
 
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
-  const processedApprovals = approvals.filter(a => a.status !== 'pending');
+  const awaitingManagerApprovals = approvals.filter(a => a.status === 'pending_branch_manager_approval');
+  const processedApprovals = approvals.filter(
+    a => a.status !== 'pending' && a.status !== 'pending_branch_manager_approval'
+  );
 
-  const filteredApprovals = activeTab === 'pending' ? pendingApprovals : processedApprovals;
+  const filteredApprovals =
+    activeTab === 'pending' ? pendingApprovals
+    : activeTab === 'manager_gate' ? awaitingManagerApprovals
+    : processedApprovals;
 
   return (
     <DashboardLayout>
@@ -464,6 +513,11 @@ export const Approvals: React.FC = () => {
             <CardContent>
               <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
                 <TabsList>
+                  {isRole(ROLES.MANAGER) && (
+                    <TabsTrigger value="manager_gate">
+                      {language === 'ar' ? 'بانتظار موافقتي' : 'Awaiting My Approval'} ({awaitingManagerApprovals.length})
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger value="pending">
                     {language === 'ar' ? 'معلقة' : 'Pending'} ({pendingApprovals.length})
                   </TabsTrigger>
@@ -558,7 +612,40 @@ export const Approvals: React.FC = () => {
                       </TableCell>
                       <TableCell>{getPriorityBadge(approval.priority, language)}</TableCell>
                       <TableCell>
-                        {approval.status === 'pending' ? (
+                        {approval.status === 'pending_branch_manager_approval' ? (
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDocumentViewerApproval(approval)}
+                              title={language === 'ar' ? 'عرض المستند الموقّع' : 'View signed document'}
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                            {isRole(ROLES.MANAGER) && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-success hover:text-success"
+                                  onClick={() => handleAction(approval, 'approve')}
+                                  title={language === 'ar' ? 'موافقة' : 'Approve'}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => handleAction(approval, 'reject')}
+                                  title={language === 'ar' ? 'رفض' : 'Reject'}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        ) : approval.status === 'pending' ? (
                           <div className="flex gap-1">
                             {isRole(ROLES.RISK) && (
                               <>
@@ -811,6 +898,65 @@ export const Approvals: React.FC = () => {
                 </Button>
               )}
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Signed loan-request document viewer (Branch Manager gate) */}
+        <Dialog open={documentViewerApproval != null} onOpenChange={(open) => !open && setDocumentViewerApproval(null)}>
+          <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{language === 'ar' ? 'مستند طلب القرض' : 'Loan Request Document'}</DialogTitle>
+            </DialogHeader>
+            {documentViewerApproval && (
+              <div className="space-y-4">
+                <LoanRequestDocument
+                  language={language}
+                  data={{
+                    accountNumber: documentViewerApproval.accountNumber ?? '',
+                    customerName: documentViewerApproval.customerName,
+                    nationalId: documentViewerApproval.nationalId ?? '',
+                    monthlyIncome: documentViewerApproval.monthlyIncome ?? 0,
+                    monthlyExpenses: documentViewerApproval.monthlyExpenses ?? 0,
+                    existingLoans: documentViewerApproval.existingLoans ?? 0,
+                    employmentType: documentViewerApproval.employmentType ?? '',
+                    salaryCurrency: documentViewerApproval.salaryCurrency,
+                    requestedAmount: documentViewerApproval.amount ?? 0,
+                    signatureDataUrl: documentViewerApproval.signatureDataUrl,
+                    date: documentViewerApproval.requestDate,
+                    riskScore: documentViewerApproval.riskScore ?? null,
+                    riskCategory: documentViewerApproval.riskCategory ?? null,
+                    recommendedAction: documentViewerApproval.savedRiskExplanation?.recommended_action ?? null,
+                  }}
+                />
+                {isRole(ROLES.MANAGER) && documentViewerApproval.status === 'pending_branch_manager_approval' && (
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1 bg-success hover:bg-success/90"
+                      onClick={() => {
+                        const approval = documentViewerApproval;
+                        setDocumentViewerApproval(null);
+                        handleAction(approval, 'approve');
+                      }}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      {language === 'ar' ? 'موافقة' : 'Approve'}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => {
+                        const approval = documentViewerApproval;
+                        setDocumentViewerApproval(null);
+                        handleAction(approval, 'reject');
+                      }}
+                    >
+                      <XCircle className="h-4 w-4" />
+                      {language === 'ar' ? 'رفض' : 'Reject'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>

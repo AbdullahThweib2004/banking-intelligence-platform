@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/lib/roles';
@@ -57,6 +57,9 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
+import SignaturePad, { SignaturePadHandle } from '@/components/SignaturePad';
+import { LoanRequestDocument } from '@/components/LoanRequestDocument';
+import { validateSignaturePresent } from '@/lib/loanApplicationValidation';
 import { LOAN_PRODUCTS, LOAN_PRODUCT_IDS, LOAN_CURRENCIES, type LoanProductId, type LoanCurrency } from '@/lib/loanProducts';
 import { explainIfSchemaCacheError } from '@/lib/schemaVerification';
 import {
@@ -80,7 +83,7 @@ interface CreditApplication {
   loanAmount: number;
   riskScore: number;
   riskCategory: 'low' | 'medium' | 'high';
-  status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval';
+  status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval' | 'pending_branch_manager_approval';
   employeeId: string;
   savedRiskExplanation: SavedRiskExplanation | null;
 }
@@ -146,6 +149,7 @@ const getStatusColor = (status: CreditApplication['status']) => {
     case 'rejected': return 'text-destructive bg-destructive/10 border-destructive/20';
     case 'pending': return 'text-muted-foreground bg-muted border-border';
     case 'awaiting_approval': return 'text-warning bg-warning/10 border-warning/20';
+    case 'pending_branch_manager_approval': return 'text-info bg-info/10 border-info/20';
   }
 };
 
@@ -324,6 +328,12 @@ export const CreditRisk: React.FC = () => {
   const [formData, setFormData] = useState({ ...EMPTY_ASSESSMENT_FORM });
   const [assessmentResult, setAssessmentResult] = useState<SavedRiskExplanation | null>(null);
   const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
+  // Signed-document step: shown after "Assess Risk" produces a result, before
+  // the request is actually created. The customer signs the generated
+  // document (which includes the AI risk result) and only then is it
+  // submitted, at which point it enters the Branch Manager's approval gate.
+  const signatureRef = useRef<SignaturePadHandle>(null);
+  const [finalSubmitting, setFinalSubmitting] = useState(false);
   // Read-only display only — captured from the employment-proof contract
   // during Open New Account (see bank_customers.job_role); not part of the
   // submitted assessment payload, since risk scoring only uses employmentType.
@@ -337,6 +347,8 @@ export const CreditRisk: React.FC = () => {
     setFormData({ ...EMPTY_ASSESSMENT_FORM });
     setAssessmentResult(null);
     setAssessmentSubmitting(false);
+    setFinalSubmitting(false);
+    signatureRef.current?.clear();
     setLoadedJobRole(null);
   };
 
@@ -549,13 +561,61 @@ export const CreditRisk: React.FC = () => {
       return;
     }
 
-    console.info('[credit-risk] saving assessment with result_source =', riskSnapshot.result_source, {
+    console.info('[credit-risk] assessment computed, awaiting customer signature; result_source =', riskSnapshot.result_source, {
       score: riskSnapshot.risk_score,
       category: riskSnapshot.risk_category,
       recommended_action: riskSnapshot.recommended_action,
       eligibility_status: riskSnapshot.eligibility_status,
       source,
     });
+
+    // NOTE: nothing is written to the database yet. The request is only
+    // created once the customer has signed the generated document — see
+    // handleSubmitToManager() below, which performs the actual insert.
+    setAssessmentSubmitting(false);
+
+    const engineNote =
+      source === 'formula' && aiUnavailableReason
+        ? language === 'ar'
+          ? ` (شرح تلقائي — تعذّر شرح الذكاء الاصطناعي: ${aiUnavailableReason})`
+          : ` (deterministic explanation — AI narrative unavailable: ${aiUnavailableReason})`
+        : '';
+    const eligibilityNote = riskSnapshot.eligibility_status === 'not_eligible'
+      ? language === 'ar'
+        ? ' — غير مؤهل وفق قواعد النسبة/العمر'
+        : ' — NOT eligible under the DBR/age rules'
+      : '';
+    toast.success(
+      language === 'ar'
+        ? `تم حساب درجة المخاطر: ${riskSnapshot.risk_score}${eligibilityNote}${engineNote}. يرجى الحصول على توقيع العميل للإرسال.`
+        : `Risk score calculated: ${riskSnapshot.risk_score}${eligibilityNote}${engineNote}. Please get the customer's signature to submit.`
+    );
+    setAssessmentResult(riskSnapshot);
+  };
+
+  /**
+   * Runs once the customer has signed the generated document — creates the
+   * actual approval_requests row with status='pending_branch_manager_approval'.
+   * It only becomes visible to risk_department once a Branch Manager
+   * approves it (see the manager-gate RLS policies).
+   */
+  const handleSubmitToManager = async () => {
+    if (!assessmentResult) return;
+
+    const signatureDataUrl = signatureRef.current?.getDataUrl() ?? null;
+    const sigCheck = validateSignaturePresent(signatureDataUrl, language);
+    if (!sigCheck.ok) {
+      toast.error(sigCheck.error);
+      return;
+    }
+
+    const riskSnapshot = assessmentResult;
+    const income = Number(formData.monthlyIncome) || 0;
+    const expenses = Number(formData.monthlyExpenses) || 0;
+    const existing = Number(formData.existingLoans) || 0;
+    const requestedLoanAmount = Number(formData.loanAmount) || 0;
+
+    setFinalSubmitting(true);
 
     const { error } = await supabase.from('approval_requests').insert({
       type: 'credit',
@@ -578,7 +638,8 @@ export const CreditRisk: React.FC = () => {
       result_source: riskSnapshot.result_source,
       assessed_at: riskSnapshot.assessed_at,
       priority: riskSnapshot.risk_category === 'high' ? 'urgent' : 'normal',
-      status: 'pending',
+      status: 'pending_branch_manager_approval',
+      signature_data_url: signatureDataUrl,
       employee_id: user?.id ?? null,
       notes: formData.loanPurpose
         ? `Account: ${accountNumber.trim()} | Loan purpose: ${formData.loanPurpose}`
@@ -600,37 +661,27 @@ export const CreditRisk: React.FC = () => {
       ai_explanation: riskSnapshot.ai_explanation,
     });
 
-    setAssessmentSubmitting(false);
+    setFinalSubmitting(false);
 
     if (error) {
-      console.error('Failed to create assessment:', error);
+      console.error('Failed to submit signed assessment:', error);
       const schemaMessage = await explainIfSchemaCacheError(error, language);
       toast.error(
         schemaMessage ??
           (language === 'ar'
-            ? `فشل إنشاء التقييم: ${error.message}`
-            : `Failed to create assessment: ${error.message}`)
+            ? `فشل إرسال الطلب: ${error.message}`
+            : `Failed to submit the request: ${error.message}`)
       );
       return;
     }
 
-    const engineNote =
-      source === 'formula' && aiUnavailableReason
-        ? language === 'ar'
-          ? ` (شرح تلقائي — تعذّر شرح الذكاء الاصطناعي: ${aiUnavailableReason})`
-          : ` (deterministic explanation — AI narrative unavailable: ${aiUnavailableReason})`
-        : '';
-    const eligibilityNote = riskSnapshot.eligibility_status === 'not_eligible'
-      ? language === 'ar'
-        ? ' — غير مؤهل وفق قواعد النسبة/العمر'
-        : ' — NOT eligible under the DBR/age rules'
-      : '';
     toast.success(
       language === 'ar'
-        ? `تم حساب درجة المخاطر: ${riskSnapshot.risk_score}${eligibilityNote} وإرسال الطلب للموافقة${engineNote}`
-        : `Risk score calculated: ${riskSnapshot.risk_score}${eligibilityNote} — sent for approval${engineNote}`
+        ? 'تم إرسال الطلب الموقّع إلى المدير للموافقة عليه.'
+        : 'The signed request has been submitted to the Branch Manager for approval.'
     );
-    setAssessmentResult(riskSnapshot);
+    resetAssessmentForm();
+    setIsNewAssessmentOpen(false);
     fetchApplications();
   };
 
@@ -925,15 +976,56 @@ export const CreditRisk: React.FC = () => {
                 {assessmentResult ? (
                   <>
                     <SavedRiskExplanationView explanation={assessmentResult} language={language} />
-                    <div className="flex justify-end">
+
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">
+                        {language === 'ar' ? 'مستند طلب القرض — يتطلب توقيع العميل' : 'Loan Request Document — Customer Signature Required'}
+                      </h3>
+                      <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-1.5">
+                        {language === 'ar' ? 'طباعة / حفظ كـ PDF' : 'Print / Save as PDF'}
+                      </Button>
+                    </div>
+
+                    <LoanRequestDocument
+                      language={language}
+                      data={{
+                        accountNumber: accountNumber.trim(),
+                        customerName: formData.customerName,
+                        nationalId: formData.nationalId,
+                        monthlyIncome: Number(formData.monthlyIncome) || 0,
+                        monthlyExpenses: Number(formData.monthlyExpenses) || 0,
+                        existingLoans: Number(formData.existingLoans) || 0,
+                        employmentType: formData.employmentType,
+                        jobRole: loadedJobRole,
+                        salaryCurrency: formData.salaryCurrency,
+                        requestedAmount: Number(formData.loanAmount) || 0,
+                        signatureDataUrl: null,
+                        riskScore: assessmentResult.risk_score,
+                        riskCategory: assessmentResult.risk_category,
+                        recommendedAction: assessmentResult.recommended_action,
+                      }}
+                    />
+
+                    <SignaturePad
+                      ref={signatureRef}
+                      label={language === 'ar' ? 'توقيع العميل' : 'Customer Signature'}
+                      required
+                    />
+
+                    <div className="flex justify-end gap-2">
                       <Button
+                        variant="outline"
                         onClick={() => {
                           resetAssessmentForm();
                           setIsNewAssessmentOpen(false);
                         }}
-                        className="gradient-bg"
+                        disabled={finalSubmitting}
                       >
-                        {language === 'ar' ? 'تم' : 'Done'}
+                        {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                      </Button>
+                      <Button onClick={handleSubmitToManager} className="gradient-bg" disabled={finalSubmitting}>
+                        {finalSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {language === 'ar' ? 'إرسال إلى المدير' : 'Submit to Branch Manager'}
                       </Button>
                     </div>
                   </>
@@ -1644,6 +1736,7 @@ export const CreditRisk: React.FC = () => {
                         {app.status === 'rejected' && (language === 'ar' ? 'مرفوض' : 'Rejected')}
                         {app.status === 'pending' && (language === 'ar' ? 'قيد المراجعة' : 'Pending')}
                         {app.status === 'awaiting_approval' && (language === 'ar' ? 'بانتظار الموافقة' : 'Awaiting Approval')}
+                        {app.status === 'pending_branch_manager_approval' && (language === 'ar' ? 'بانتظار موافقة المدير' : 'Awaiting Manager Approval')}
                       </Badge>
                     </TableCell>
                     <TableCell>
