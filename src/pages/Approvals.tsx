@@ -45,7 +45,7 @@ import { toast } from 'sonner';
 import { ModificationRequestsPanel } from '@/components/ModificationRequestsPanel';
 import { SavedRiskExplanationView } from '@/components/CreditScoreExplanation';
 import { LoanRequestDocument } from '@/components/LoanRequestDocument';
-import { canSubmitApproval, evaluateRiskGate } from '@/lib/riskDecisionGate';
+import { auditApprovalBlockedByMissingData, canSubmitApproval, evaluateRiskGate } from '@/lib/riskDecisionGate';
 import {
   hasSavedRiskExplanation,
   type SavedRiskExplanation,
@@ -65,7 +65,7 @@ interface ApprovalRequest {
   amount?: number;
   riskScore?: number;
   riskCategory?: 'low' | 'medium' | 'high';
-  status: 'pending' | 'approved' | 'rejected' | 'pending_branch_manager_approval';
+  status: 'pending' | 'approved' | 'rejected' | 'pending_branch_manager_approval' | 'pending_audit_approval' | 'audit_approved';
   notes?: string;
   priority: 'normal' | 'high' | 'urgent';
   savedRiskExplanation: SavedRiskExplanation | null;
@@ -79,6 +79,13 @@ interface ApprovalRequest {
   employmentType?: string | null;
   salaryCurrency?: string | null;
   signatureDataUrl?: string | null;
+  // Per-stage decision traceability (Audit's "full case file" needs all three).
+  managerDecisionByName?: string | null;
+  managerDecisionAt?: string | null;
+  riskDecisionByName?: string | null;
+  riskDecisionAt?: string | null;
+  auditDecisionByName?: string | null;
+  auditDecisionAt?: string | null;
 }
 
 // Row shape as stored in the Supabase `approval_requests` table.
@@ -111,6 +118,12 @@ interface ApprovalRow {
   employment_type?: string | null;
   salary_currency?: string | null;
   signature_data_url?: string | null;
+  manager_decision_by?: string | null;
+  manager_decision_at?: string | null;
+  risk_decision_by?: string | null;
+  risk_decision_at?: string | null;
+  audit_decision_by?: string | null;
+  audit_decision_at?: string | null;
 }
 
 // Parse the saved risk explanation snapshot from a row without recalculating.
@@ -154,6 +167,12 @@ const mapRow = (
   employmentType: row.employment_type ?? null,
   salaryCurrency: row.salary_currency ?? null,
   signatureDataUrl: row.signature_data_url ?? null,
+  managerDecisionByName: (row.manager_decision_by && employeeNameById.get(row.manager_decision_by)) || null,
+  managerDecisionAt: row.manager_decision_at ?? null,
+  riskDecisionByName: (row.risk_decision_by && employeeNameById.get(row.risk_decision_by)) || null,
+  riskDecisionAt: row.risk_decision_at ?? null,
+  auditDecisionByName: (row.audit_decision_by && employeeNameById.get(row.audit_decision_by)) || null,
+  auditDecisionAt: row.audit_decision_at ?? null,
 });
 
 const getRiskColor = (category?: ApprovalRequest['riskCategory']) => {
@@ -254,13 +273,25 @@ export const Approvals: React.FC = () => {
 
   // Gates Risk's final Approve decision on the already-computed, deterministic
   // DBR/age-at-maturity rule engine result (src/lib/loanEligibility.ts) — see
-  // src/lib/riskDecisionGate.ts. Only applies to Risk's own decision (not the
-  // Branch Manager gate step, which has no rule-engine result to check yet).
+  // src/lib/riskDecisionGate.ts. Only applies to Risk's own decision (the
+  // 'pending' stage) — not the Branch Manager gate (no rule-engine result to
+  // check yet) or the Audit stage (its own, stricter, non-overridable check
+  // below — a missing result at Audit means process integrity is broken,
+  // rather than a risk-tolerance judgment call).
   const isManagerGateAction = selectedApproval?.status === 'pending_branch_manager_approval';
+  const isAuditAction = selectedApproval?.status === 'pending_audit_approval';
   const riskApproveGate =
-    !isManagerGateAction && actionType === 'approve'
+    !isManagerGateAction && !isAuditAction && actionType === 'approve'
       ? evaluateRiskGate(selectedApproval?.savedRiskExplanation?.risk_derived_features ?? null)
       : null;
+
+  // Audit cannot approve a request missing the Risk-stage eligibility result
+  // at all (distinct from riskApproveGate's 'not_eligible' + override flow —
+  // this is a hard block, since it signals a broken/skipped prior stage, not
+  // a risk-tolerance decision for Audit to make).
+  const auditMissingPriorStageData =
+    isAuditAction && actionType === 'approve' &&
+    auditApprovalBlockedByMissingData(selectedApproval?.savedRiskExplanation?.risk_derived_features ?? null);
 
   // Eye icon: open the saved risk explanation snapshot (read-only, no recompute).
   const openRiskExplanation = (approval: ApprovalRequest) => {
@@ -276,15 +307,18 @@ export const Approvals: React.FC = () => {
       return;
     }
 
-    // A row still at the Branch Manager gate has a different transition:
-    // "approve" moves it into risk_department's queue (status='pending',
-    // exactly like any assessment always has), not straight to 'approved'.
-    // "reject" here is a SOFT reject (kept for history), same status value
-    // as risk's own rejection.
+    // Each stage has a different transition:
+    //   Branch Manager gate: approve -> 'pending' (Risk's queue), reject -> 'rejected' (soft).
+    //   Risk stage:          approve -> 'pending_audit_approval' (Audit's queue), reject -> 'rejected' (soft).
+    //   Audit stage:         approve -> 'audit_approved' (final), reject -> 'rejected' (soft — kept
+    //                        for compliance/audit-trail purposes, same reasoning as every other stage).
     const isManagerGateDecision = selectedApproval.status === 'pending_branch_manager_approval';
+    const isAuditDecision = selectedApproval.status === 'pending_audit_approval';
     const newStatus = isManagerGateDecision
       ? (actionType === 'approve' ? 'pending' : 'rejected')
-      : (actionType === 'approve' ? 'approved' : 'rejected');
+      : isAuditDecision
+        ? (actionType === 'approve' ? 'audit_approved' : 'rejected')
+        : (actionType === 'approve' ? 'pending_audit_approval' : 'rejected');
     const now = new Date().toISOString();
 
     // Risk approving despite a failed DBR/age-at-maturity rule requires a
@@ -299,6 +333,17 @@ export const Approvals: React.FC = () => {
       return;
     }
 
+    // Audit cannot approve a request missing the Risk-stage eligibility
+    // result at all — hard block, no override (see auditMissingPriorStageData).
+    if (auditMissingPriorStageData) {
+      toast.error(
+        language === 'ar'
+          ? 'لا يمكن الموافقة — بيانات مرحلة المخاطر (نسبة عبء الدين / العمر عند الاستحقاق) غير مكتملة.'
+          : 'Cannot approve — the Risk stage\'s DBR/age-at-maturity data is missing or incomplete.'
+      );
+      return;
+    }
+
     const { error } = await supabase
       .from('approval_requests')
       .update(
@@ -309,18 +354,30 @@ export const Approvals: React.FC = () => {
               manager_decision_by: user?.id ?? null,
               manager_decision_at: now,
             }
-          : {
-              status: newStatus,
-              updated_at: now,
-              approved_at: newStatus === 'approved' ? now : null,
-              ...(riskApproveGate?.requiresOverrideReason
-                ? {
-                    risk_override_reason: overrideReason.trim(),
-                    risk_override_by: user?.id ?? null,
-                    risk_override_at: now,
-                  }
-                : {}),
-            }
+          : isAuditDecision
+            ? {
+                status: newStatus,
+                updated_at: now,
+                audit_decision_by: user?.id ?? null,
+                audit_decision_at: now,
+                // audit_approved is now the true final state — approved_at
+                // (used by the "Approved Today" / avg-processing-time stats)
+                // is set here rather than at the Risk stage.
+                approved_at: newStatus === 'audit_approved' ? now : null,
+              }
+            : {
+                status: newStatus,
+                updated_at: now,
+                risk_decision_by: user?.id ?? null,
+                risk_decision_at: now,
+                ...(riskApproveGate?.requiresOverrideReason
+                  ? {
+                      risk_override_reason: overrideReason.trim(),
+                      risk_override_by: user?.id ?? null,
+                      risk_override_at: now,
+                    }
+                  : {}),
+              }
       )
       .eq('id', selectedApproval.id);
 
@@ -355,13 +412,17 @@ export const Approvals: React.FC = () => {
 
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const awaitingManagerApprovals = approvals.filter(a => a.status === 'pending_branch_manager_approval');
+  const awaitingAuditApprovals = approvals.filter(a => a.status === 'pending_audit_approval');
   const processedApprovals = approvals.filter(
-    a => a.status !== 'pending' && a.status !== 'pending_branch_manager_approval'
+    a => a.status !== 'pending'
+      && a.status !== 'pending_branch_manager_approval'
+      && a.status !== 'pending_audit_approval'
   );
 
   const filteredApprovals =
     activeTab === 'pending' ? pendingApprovals
     : activeTab === 'manager_gate' ? awaitingManagerApprovals
+    : activeTab === 'audit_gate' ? awaitingAuditApprovals
     : processedApprovals;
 
   return (
@@ -549,6 +610,11 @@ export const Approvals: React.FC = () => {
                   {isRole(ROLES.MANAGER) && (
                     <TabsTrigger value="manager_gate">
                       {language === 'ar' ? 'بانتظار موافقتي' : 'Awaiting My Approval'} ({awaitingManagerApprovals.length})
+                    </TabsTrigger>
+                  )}
+                  {isRole(ROLES.AUDIT) && (
+                    <TabsTrigger value="audit_gate">
+                      {language === 'ar' ? 'بانتظار التدقيق' : 'Awaiting Audit'} ({awaitingAuditApprovals.length})
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="pending">
@@ -761,14 +827,49 @@ export const Approvals: React.FC = () => {
                               </Button>
                             </HelpTarget>
                           </div>
+                        ) : approval.status === 'pending_audit_approval' ? (
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDocumentViewerApproval(approval)}
+                              title={language === 'ar' ? 'عرض ملف الحالة الكامل' : 'View full case file'}
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                            {isRole(ROLES.AUDIT) && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-success hover:text-success"
+                                  onClick={() => handleAction(approval, 'approve')}
+                                  title={language === 'ar' ? 'موافقة نهائية' : 'Final approve'}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => handleAction(approval, 'reject')}
+                                  title={language === 'ar' ? 'رفض' : 'Reject'}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex items-center gap-1">
                             <Badge className={
-                              approval.status === 'approved'
+                              approval.status === 'approved' || approval.status === 'audit_approved'
                                 ? 'bg-success/10 text-success'
                                 : 'bg-destructive/10 text-destructive'
                             }>
-                              {approval.status === 'approved'
+                              {approval.status === 'audit_approved'
+                                ? (language === 'ar' ? 'معتمد نهائياً (تدقيق)' : 'Fully Approved (Audit)')
+                                : approval.status === 'approved'
                                 ? (language === 'ar' ? 'موافق عليه' : 'Approved')
                                 : (language === 'ar' ? 'مرفوض' : 'Rejected')}
                             </Badge>
@@ -961,6 +1062,14 @@ export const Approvals: React.FC = () => {
                 </div>
               )}
 
+              {auditMissingPriorStageData && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {language === 'ar'
+                    ? 'لا يمكن الموافقة — بيانات مرحلة المخاطر (نسبة عبء الدين / العمر عند الاستحقاق) غير مكتملة. لا يمكن تجاوز هذا الحظر.'
+                    : 'Cannot approve — the Risk stage\'s DBR/age-at-maturity data is missing or incomplete. This cannot be overridden.'}
+                </div>
+              )}
+
               {actionType !== 'view' && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
@@ -982,7 +1091,10 @@ export const Approvals: React.FC = () => {
               {actionType !== 'view' && (
                 <Button
                   onClick={confirmAction}
-                  disabled={riskApproveGate != null && !canSubmitApproval(riskApproveGate, overrideReason)}
+                  disabled={
+                    (riskApproveGate != null && !canSubmitApproval(riskApproveGate, overrideReason)) ||
+                    auditMissingPriorStageData
+                  }
                   className={actionType === 'approve' ? 'bg-success hover:bg-success/90' : 'bg-destructive hover:bg-destructive/90'}
                 >
                   {actionType === 'approve'
@@ -996,7 +1108,10 @@ export const Approvals: React.FC = () => {
 
         {/* Signed loan-request document viewer — read-only for everyone; the
             same document Branch Manager reviewed is now also visible to Risk
-            (status='pending'), with the same Approve/Reject actions. */}
+            (status='pending') and, as the full case file (document + every
+            prior stage's decision + the Risk-stage rule-engine/AI result),
+            to Audit (status='pending_audit_approval'/'audit_approved'), with
+            the same Approve/Reject actions at each stage. */}
         <Dialog open={documentViewerApproval != null} onOpenChange={(open) => !open && setDocumentViewerApproval(null)}>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
@@ -1029,11 +1144,66 @@ export const Approvals: React.FC = () => {
                     recommendedAction: documentViewerApproval.savedRiskExplanation?.recommended_action ?? null,
                   }}
                 />
+
+                {/* Approval History — full traceability across every stage. */}
+                <div className="rounded-lg border border-border p-3 text-sm space-y-1.5">
+                  <p className="text-xs font-medium uppercase text-muted-foreground mb-1">
+                    {language === 'ar' ? 'سجل الموافقات' : 'Approval History'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">
+                      {language === 'ar' ? 'المدير: ' : 'Branch Manager: '}
+                    </span>
+                    {documentViewerApproval.managerDecisionByName && documentViewerApproval.managerDecisionAt
+                      ? `${documentViewerApproval.managerDecisionByName} — ${new Date(documentViewerApproval.managerDecisionAt).toLocaleString()}`
+                      : (language === 'ar' ? 'لم يُتخذ قرار بعد' : 'No decision yet')}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">
+                      {language === 'ar' ? 'دائرة المخاطر: ' : 'Risk: '}
+                    </span>
+                    {documentViewerApproval.riskDecisionByName && documentViewerApproval.riskDecisionAt
+                      ? `${documentViewerApproval.riskDecisionByName} — ${new Date(documentViewerApproval.riskDecisionAt).toLocaleString()}`
+                      : (language === 'ar' ? 'لم يُتخذ قرار بعد' : 'No decision yet')}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">
+                      {language === 'ar' ? 'التدقيق: ' : 'Audit: '}
+                    </span>
+                    {documentViewerApproval.auditDecisionByName && documentViewerApproval.auditDecisionAt
+                      ? `${documentViewerApproval.auditDecisionByName} — ${new Date(documentViewerApproval.auditDecisionAt).toLocaleString()}`
+                      : (language === 'ar' ? 'لم يُتخذ قرار بعد' : 'No decision yet')}
+                  </p>
+                </div>
+
+                {/* Risk-stage rule engine (DBR/age-at-maturity) + AI insights —
+                    same authoritative view used at the Risk stage, now part
+                    of Audit's one-stop case file. */}
+                {documentViewerApproval.savedRiskExplanation && (
+                  <SavedRiskExplanationView
+                    explanation={documentViewerApproval.savedRiskExplanation}
+                    language={language}
+                  />
+                )}
+
+                {auditMissingPriorStageData && documentViewerApproval.status === 'pending_audit_approval' && (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    {language === 'ar'
+                      ? 'لا يمكن الموافقة — بيانات مرحلة المخاطر غير مكتملة.'
+                      : 'Cannot approve — the Risk stage\'s data is missing or incomplete.'}
+                  </div>
+                )}
+
                 {((isRole(ROLES.MANAGER) && documentViewerApproval.status === 'pending_branch_manager_approval') ||
-                  (isRole(ROLES.RISK) && documentViewerApproval.status === 'pending')) && (
+                  (isRole(ROLES.RISK) && documentViewerApproval.status === 'pending') ||
+                  (isRole(ROLES.AUDIT) && documentViewerApproval.status === 'pending_audit_approval')) && (
                   <div className="flex gap-2">
                     <Button
                       className="flex-1 bg-success hover:bg-success/90"
+                      disabled={
+                        documentViewerApproval.status === 'pending_audit_approval' &&
+                        auditApprovalBlockedByMissingData(documentViewerApproval.savedRiskExplanation?.risk_derived_features ?? null)
+                      }
                       onClick={() => {
                         const approval = documentViewerApproval;
                         setDocumentViewerApproval(null);

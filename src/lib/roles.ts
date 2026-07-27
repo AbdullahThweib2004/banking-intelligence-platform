@@ -2,17 +2,18 @@ export const ROLES = {
   EMPLOYEE: 'branch_employee',
   MANAGER: 'branch_manager',
   RISK: 'risk_department',
+  AUDIT: 'audit_department',
 } as const;
 
 export type Role = typeof ROLES[keyof typeof ROLES];
 
 // Permission map — single source of truth for all route access.
 export const ROUTE_PERMISSIONS: Record<string, Role[]> = {
-  '/dashboard':       ['branch_employee', 'branch_manager', 'risk_department'],
+  '/dashboard':       ['branch_employee', 'branch_manager', 'risk_department', 'audit_department'],
   '/credit-risk':     ['branch_employee', 'branch_manager', 'risk_department'],
   '/documents':       ['branch_employee', 'branch_manager', 'risk_department'],
   '/ai-assistant':    ['branch_employee', 'branch_manager', 'risk_department'],
-  '/approvals':       ['branch_employee', 'branch_manager', 'risk_department'],
+  '/approvals':       ['branch_employee', 'branch_manager', 'risk_department', 'audit_department'],
   '/user-management': ['branch_manager'],
   '/audit-log':       ['risk_department'],
   '/modification-requests': ['branch_manager', 'risk_department'],

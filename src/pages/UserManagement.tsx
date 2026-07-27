@@ -53,6 +53,7 @@ import {
   ShieldAlert,
   AlertTriangle,
   Loader2,
+  FileCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -96,6 +97,8 @@ const roleLabel = (role: Role, language: string): string => {
       return language === 'ar' ? 'مدير' : 'Manager';
     case ROLES.RISK:
       return language === 'ar' ? 'دائرة المخاطر' : 'Risk';
+    case ROLES.AUDIT:
+      return language === 'ar' ? 'دائرة التدقيق' : 'Audit';
     default:
       return language === 'ar' ? 'موظف' : 'Employee';
   }
@@ -114,6 +117,13 @@ const getRoleBadge = (role: Role, language: string) => {
       return (
         <Badge className="bg-primary/10 text-primary border-primary/20 gap-1">
           <ShieldAlert className="h-3 w-3" />
+          {roleLabel(role, language)}
+        </Badge>
+      );
+    case ROLES.AUDIT:
+      return (
+        <Badge className="bg-warning/10 text-warning border-warning/20 gap-1">
+          <FileCheck className="h-3 w-3" />
           {roleLabel(role, language)}
         </Badge>
       );
@@ -340,6 +350,7 @@ export const UserManagement: React.FC = () => {
     total: users.length,
     managers: users.filter((u) => u.role === ROLES.MANAGER).length,
     risk: users.filter((u) => u.role === ROLES.RISK).length,
+    audit: users.filter((u) => u.role === ROLES.AUDIT).length,
     employees: users.filter((u) => u.role === ROLES.EMPLOYEE).length,
   };
 
@@ -417,6 +428,7 @@ export const UserManagement: React.FC = () => {
                       <SelectItem value={ROLES.EMPLOYEE}>{roleLabel(ROLES.EMPLOYEE, language)}</SelectItem>
                       <SelectItem value={ROLES.MANAGER}>{roleLabel(ROLES.MANAGER, language)}</SelectItem>
                       <SelectItem value={ROLES.RISK}>{roleLabel(ROLES.RISK, language)}</SelectItem>
+                      <SelectItem value={ROLES.AUDIT}>{roleLabel(ROLES.AUDIT, language)}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -696,6 +708,13 @@ export const UserManagement: React.FC = () => {
                           >
                             <ShieldAlert className="h-4 w-4 mr-2" />
                             {language === 'ar' ? 'تعيين كدائرة مخاطر' : 'Set as Risk'}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleUpdateRole(user.id, ROLES.AUDIT)}
+                            disabled={user.role === ROLES.AUDIT}
+                          >
+                            <FileCheck className="h-4 w-4 mr-2" />
+                            {language === 'ar' ? 'تعيين كدائرة تدقيق' : 'Set as Audit'}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => handleToggleStatus(user)}>

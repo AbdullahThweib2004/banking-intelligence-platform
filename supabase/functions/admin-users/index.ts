@@ -16,7 +16,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ALLOWED_ROLES = ["branch_employee", "branch_manager", "risk_department"];
+const ALLOWED_ROLES = ["branch_employee", "branch_manager", "risk_department", "audit_department"];
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

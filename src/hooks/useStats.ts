@@ -142,18 +142,18 @@ async function fetchViaQueries(): Promise<RawStats> {
   ] = await Promise.all([
     countCredit(),
     countCredit((q) => q.in('status', ['pending', 'awaiting_approval'])),
-    countCredit((q) => q.eq('status', 'approved').gte('updated_at', todayIso)),
+    countCredit((q) => q.eq('status', 'audit_approved').gte('updated_at', todayIso)),
     countCredit((q) => q.eq('risk_category', 'low')),
     countCredit((q) => q.eq('risk_category', 'medium')),
     countCredit((q) => q.eq('risk_category', 'high')),
     countApprovals((q) => q.eq('status', 'pending')),
     countApprovals((q) => q.eq('priority', 'urgent')),
-    countApprovals((q) => q.eq('status', 'approved').gte('approved_at', todayIso)),
+    countApprovals((q) => q.eq('status', 'audit_approved').gte('approved_at', todayIso)),
     supabase.from('credit_applications').select('risk_score').not('risk_score', 'is', null),
     supabase
       .from('approval_requests')
       .select('created_at, approved_at')
-      .eq('status', 'approved')
+      .eq('status', 'audit_approved')
       .not('approved_at', 'is', null),
   ]);
 

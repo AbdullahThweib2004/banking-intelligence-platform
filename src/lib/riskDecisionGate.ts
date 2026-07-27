@@ -53,3 +53,17 @@ export function canSubmitApproval(gate: RiskGateResult, overrideReason: string):
   if (!gate.requiresOverrideReason) return true;
   return overrideReason.trim().length > 0;
 }
+
+/**
+ * Audit's gate is stricter than Risk's own: a MISSING rule-engine result
+ * (the 'unknown' state above) is a hard block with no override, since it
+ * means a prior stage was skipped or its data was lost — a process-integrity
+ * problem, not a risk-tolerance judgment call for Audit to make. A confirmed
+ * 'not_eligible' result is not re-blocked here — Risk already decided (with
+ * an override reason on file if needed) before the request ever reached Audit.
+ */
+export function auditApprovalBlockedByMissingData(
+  derivedFeatures: Pick<DerivedFeatures, 'eligibility_status' | 'eligibility_reasons'> | null | undefined
+): boolean {
+  return evaluateRiskGate(derivedFeatures).state === 'unknown';
+}

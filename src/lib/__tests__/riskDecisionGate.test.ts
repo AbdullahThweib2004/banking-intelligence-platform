@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { canSubmitApproval, evaluateRiskGate } from '../riskDecisionGate.ts';
+import { auditApprovalBlockedByMissingData, canSubmitApproval, evaluateRiskGate } from '../riskDecisionGate.ts';
 
 describe('evaluateRiskGate', () => {
   it('passes through when eligible, no override required', () => {
@@ -90,5 +90,35 @@ describe('canSubmitApproval', () => {
   it('does not require an override reason for the "unknown" state', () => {
     const gate = evaluateRiskGate(null);
     assert.equal(canSubmitApproval(gate, ''), true);
+  });
+});
+
+describe('auditApprovalBlockedByMissingData', () => {
+  it('blocks Audit approval when the Risk stage never ran at all (no derived features)', () => {
+    assert.equal(auditApprovalBlockedByMissingData(null), true);
+  });
+
+  it('blocks Audit approval when eligibility_status itself is missing', () => {
+    assert.equal(
+      auditApprovalBlockedByMissingData({ eligibility_status: undefined as never, eligibility_reasons: [] }),
+      true
+    );
+  });
+
+  it('does NOT block Audit approval when eligibility_status is "eligible"', () => {
+    assert.equal(
+      auditApprovalBlockedByMissingData({ eligibility_status: 'eligible', eligibility_reasons: [] }),
+      false
+    );
+  });
+
+  it('does NOT block Audit approval when eligibility_status is "not_eligible" — Risk already decided (with an override reason on file if needed) before it reached Audit', () => {
+    assert.equal(
+      auditApprovalBlockedByMissingData({
+        eligibility_status: 'not_eligible',
+        eligibility_reasons: ['Debt burden ratio 62.0% exceeds the 50% cap.'],
+      }),
+      false
+    );
   });
 });

@@ -79,6 +79,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
     switch (role) {
       case ROLES.MANAGER: return t('users.manager');
       case ROLES.RISK: return language === 'ar' ? 'دائرة المخاطر' : 'Risk Department';
+      case ROLES.AUDIT: return language === 'ar' ? 'دائرة التدقيق' : 'Audit Department';
       case ROLES.EMPLOYEE: return t('users.employee');
       default: return t('users.employee');
     }
