@@ -34,7 +34,7 @@ export interface Point {
   y: number;
 }
 
-// All registered, visible, selectable targets whose bounding box contains the point.
+// All registered, visible, selectable targets whose bounding box contains the point
 export function getEligibleHelpTargets(
   targets: Record<string, HelpTargetData>,
   point: Point
