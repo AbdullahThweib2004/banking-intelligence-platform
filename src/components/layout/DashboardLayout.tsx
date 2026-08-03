@@ -256,7 +256,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
             
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full">
+                <Button variant="ghost" size="icon" className="rounded-full" data-testid="user-menu-trigger">
                   <Settings className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>

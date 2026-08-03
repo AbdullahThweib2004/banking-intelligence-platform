@@ -482,12 +482,14 @@ export const AIAssistant: React.FC = () => {
                       placeholder={t('ai.placeholder')}
                       className="flex-1"
                       disabled={isLoading || conversationLoading}
+                      data-testid="ai-chat-input"
                     />
                     <Button
                       type="button"
                       onClick={() => void handleSend()}
                       disabled={!input.trim() || isLoading || conversationLoading}
                       className="gradient-bg"
+                      data-testid="ai-send-button"
                     >
                       {isLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
