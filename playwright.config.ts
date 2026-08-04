@@ -1,4 +1,15 @@
 import { defineConfig, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
+
+// Load e2e/.env.e2e into process.env before reading it below — without
+// this, the file could be filled in correctly and every credentialed test
+// would still skip, since nothing else in this project auto-loads it.
+// Never overrides a var already set in the environment (e.g. real CI
+// secrets), and is a no-op if the file doesn't exist (unconfigured roles
+// still skip gracefully, same as before).
+if (existsSync('e2e/.env.e2e')) {
+  process.loadEnvFile('e2e/.env.e2e');
+}
 
 /**
  * Playwright E2E config. baseURL/port defaults match the project's own

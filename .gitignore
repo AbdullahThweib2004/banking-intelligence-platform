@@ -24,8 +24,14 @@ dist-ssr
 *.sw?
 .env
 .env.e2e
+.env.test
 
 # Playwright
 /test-results/
 /playwright-report/
+/playwright-report-api/
 /playwright/.cache/
+
+# Python
+backend/.pytest_cache/
+backend/**/__pycache__/

@@ -11,7 +11,11 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
-    "types": ["node", "@playwright/test"]
+    "types": ["node", "@playwright/test", "vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["e2e", "playwright.config.ts"]
+  "include": ["e2e", "tests", "playwright.config.ts", "playwright.api.config.ts"]
 }

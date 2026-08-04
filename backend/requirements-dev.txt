@@ -1,0 +1,5 @@
+# Test-only dependencies — kept separate from requirements.txt (production
+# runtime deps) so `pip install -r requirements.txt` for running the API
+# stays untouched.
+-r requirements.txt
+pytest>=8.0.0

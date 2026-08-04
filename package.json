@@ -20,7 +20,18 @@
     "e2e:ui": "playwright test --ui",
     "e2e:headed": "playwright test --headed",
     "e2e:debug": "playwright test --debug",
-    "e2e:report": "playwright show-report"
+    "e2e:report": "playwright show-report",
+    "test:api": "playwright test --config=playwright.api.config.ts tests/api/health.api.spec.ts tests/api/auth.api.spec.ts",
+    "test:rls": "playwright test --config=playwright.api.config.ts tests/api/supabase-rls.api.spec.ts",
+    "test:backend": "cd backend && .venv/bin/python -m pytest tests -v",
+    "test:qa:part1": "npm run test:api && npm run test:rls && npm run test:backend",
+    "test:account-opening": "playwright test --config=playwright.api.config.ts tests/api/account-opening.api.spec.ts",
+    "test:loan-workflow": "playwright test --config=playwright.api.config.ts tests/api/loan-workflow.api.spec.ts",
+    "test:assistant": "playwright test --config=playwright.api.config.ts tests/api/assistant.api.spec.ts",
+    "test:integration": "playwright test --config=playwright.api.config.ts tests/integration/system-flow.spec.ts",
+    "test:openrouter-live": "RUN_LIVE_OPENROUTER_TESTS=true playwright test --config=playwright.api.config.ts -g \"OpenRouter live smoke test\"",
+    "test:qa:part2": "npm run test:account-opening && npm run test:loan-workflow && npm run test:assistant && npm run test:integration",
+    "test:qa:all": "npm run test:qa:part1 && npm run test:qa:part2"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
