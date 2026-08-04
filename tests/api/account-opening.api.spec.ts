@@ -198,7 +198,7 @@ test.describe('Account opening — real Supabase behavior', () => {
       .select('*')
       .single();
 
-    // The real app (findOrCreateBankCustomerFromAccountOpening) catches this
+    // The real app (findOrCreateBankCustomerFromAccountOpening) catches this Supabase error code
     // 23505 and reuses the existing row instead of surfacing it — this test
     // verifies the DB constraint that behavior depends on.
     expect(second.error).not.toBeNull();
