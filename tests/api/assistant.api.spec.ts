@@ -5,7 +5,7 @@ import { getAdminClient } from '../fixtures/supabase-admin';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, hasSupabaseConfig, hasServiceRole, runLiveOpenRouterTests } from '../utils/env';
 
 /**
- * Assistant / RAG / OpenRouter tests.
+ * Assistant / RAG / OpenRouter tests. Live tests are disabled by default.
  *
  * IMPORTANT boundary, confirmed by reading both edge functions
  * (supabase/functions/assistant-chat, policy-search): their input
