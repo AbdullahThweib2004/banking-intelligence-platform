@@ -6,7 +6,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, hasSupabaseConfig, hasServiceRole, run
 
 /**
  * Assistant / RAG / OpenRouter tests. Live tests are disabled by default.
- *
+ * 
  * IMPORTANT boundary, confirmed by reading both edge functions
  * (supabase/functions/assistant-chat, policy-search): their input
  * validation (missing 'query', wrong HTTP method) runs and returns BEFORE
@@ -17,7 +17,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, hasSupabaseConfig, hasServiceRole, run
  * FastAPI backend, we don't control the function's process). So the
  * success path is inherently live and is covered by exactly one smoke test,
  * gated behind RUN_LIVE_OPENROUTER_TESTS=true per the task's requirement.
- *
+ * For full context
  * Chat history persistence (ai_chat_conversations/ai_chat_messages) is
  * plain table I/O with its own RLS — fully deterministic, tested directly
  * against Supabase with no OpenRouter dependency at all.
