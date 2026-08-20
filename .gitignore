@@ -35,3 +35,6 @@ dist-ssr
 # Python
 backend/.pytest_cache/
 backend/**/__pycache__/
+
+# Local HTTPS dev certificates (mkcert) — private key must never be committed
+certs/*.pem

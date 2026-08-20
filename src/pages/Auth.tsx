@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Globe, Loader2, AlertCircle } from 'lucide-react';
 import { BoPLogo } from '@/components/BoPLogo';
+import { ForgotPasswordFlow } from '@/components/auth/ForgotPasswordFlow';
 import { z } from 'zod';
 
 const loginSchema = z.object({
@@ -25,6 +26,7 @@ export const Auth: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState<'login' | 'forgot'>('login');
 
   useEffect(() => {
     if (user && !authLoading) {
@@ -139,67 +141,85 @@ export const Auth: React.FC = () => {
           </div>
 
           <Card className="border-border/50 shadow-lg">
-            <CardHeader className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-bold">
-                {t('auth.login')}
-              </CardTitle>
-              <CardDescription>
-                {language === 'ar' 
-                  ? 'أدخل بيانات الدخول للوصول إلى لوحة التحكم' 
-                  : 'Enter your credentials to access the dashboard'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
-                
-                <div className="space-y-2">
-                  <Label htmlFor="email">{t('auth.email')}</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="name@bankofpalestine.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={isLoading}
-                    className="h-11"
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="password">{t('auth.password')}</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={isLoading}
-                    className="h-11"
-                  />
-                </div>
-                
-                <Button
-                  type="submit"
-                  className="w-full h-11 gradient-bg hover:opacity-90 transition-opacity"
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {t('common.loading')}
-                    </>
-                  ) : (
-                    t('auth.login')
-                  )}
-                </Button>
-              </form>
-            </CardContent>
+            {mode === 'forgot' ? (
+              <ForgotPasswordFlow
+                onSignedIn={() => navigate('/dashboard')}
+                onBackToLogin={() => setMode('login')}
+              />
+            ) : (
+              <>
+                <CardHeader className="space-y-1 text-center">
+                  <CardTitle className="text-2xl font-bold">
+                    {t('auth.login')}
+                  </CardTitle>
+                  <CardDescription>
+                    {language === 'ar'
+                      ? 'أدخل بيانات الدخول للوصول إلى لوحة التحكم'
+                      : 'Enter your credentials to access the dashboard'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    {error && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{error}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="email">{t('auth.email')}</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="name@bankofpalestine.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        disabled={isLoading}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="password">{t('auth.password')}</Label>
+                        <button
+                          type="button"
+                          onClick={() => setMode('forgot')}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          {language === 'ar' ? 'نسيت كلمة المرور؟' : 'Forgot password?'}
+                        </button>
+                      </div>
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={isLoading}
+                        className="h-11"
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full h-11 gradient-bg hover:opacity-90 transition-opacity"
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {t('common.loading')}
+                        </>
+                      ) : (
+                        t('auth.login')
+                      )}
+                    </Button>
+                  </form>
+                </CardContent>
+              </>
+            )}
           </Card>
 
           <p className="text-center text-sm text-muted-foreground mt-6">

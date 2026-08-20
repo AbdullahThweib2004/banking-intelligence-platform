@@ -13,7 +13,10 @@ export class UserManagementPage {
     this.page = page;
     this.heading = page.getByRole('heading', { name: TEXT.users.title, level: 1 });
     this.addUserButton = page.getByRole('button', { name: TEXT.users.addUser });
-    this.addUserDialogTitle = page.getByRole('dialog').getByText(TEXT.users.addUser);
+    // Scoped to the heading role: the dialog's own submit button carries
+    // the identical "Add User" text, so an unscoped getByText match matches
+    // both.
+    this.addUserDialogTitle = page.getByRole('dialog').getByRole('heading', { name: TEXT.users.addUser });
     this.usersTable = page.getByRole('table');
   }
 

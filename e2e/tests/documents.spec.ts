@@ -20,7 +20,7 @@ test.describe('Documents', () => {
     const documents = new DocumentsPage(page);
     await documents.goto();
 
-    await documents.openAccountTaskCard.click();
+    await documents.openAccountWizard();
     await expect(documents.accountWizardDialog).toBeVisible();
   });
 

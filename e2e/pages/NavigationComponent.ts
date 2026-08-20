@@ -18,7 +18,11 @@ export class NavigationComponent {
   }
 
   navLink(name: string): Locator {
-    return this.page.getByRole('link', { name });
+    // Scoped to the <nav> landmark (the sidebar) specifically — some pages
+    // (e.g. Dashboard's "Quick Actions" panel) also render a plain shortcut
+    // link with the same accessible name inside <main>, which an unscoped
+    // getByRole('link', { name }) would also match.
+    return this.page.getByRole('navigation').getByRole('link', { name });
   }
 
   async goTo(name: string) {

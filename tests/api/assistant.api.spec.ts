@@ -163,7 +163,6 @@ test.describe('Chat history persistence (plain table I/O, no OpenRouter needed)'
       .insert({ user_id: session.user.id, title: '[qa-integration-test] conversation' })
       .select('*')
       .single();
-// eslint-disable-next-line playwright/no-conditional-in-test
     const badMessage = await client
       .from('ai_chat_messages')
       .insert({ conversation_id: conversation.data.id, role: 'system', content: 'not allowed' })

@@ -23,7 +23,13 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: [['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:8080',
+    baseURL: process.env.E2E_BASE_URL ?? 'https://localhost:8080',
+    // vite.config.ts now serves the dev server over HTTPS with a local
+    // mkcert-issued certificate. Playwright launches an isolated Chromium
+    // instance that doesn't reliably inherit the OS/NSS trust store
+    // `mkcert -install` configured for the regular browser, so without
+    // this every navigation would fail on an untrusted-certificate error.
+    ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -36,8 +42,15 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev:web',
-    url: process.env.E2E_BASE_URL ?? 'http://localhost:8080',
+    url: process.env.E2E_BASE_URL ?? 'https://localhost:8080',
     reuseExistingServer: !process.env.CI,
+    // Separate from use.ignoreHTTPSErrors above — this one governs the
+    // internal readiness probe Playwright's test runner makes to `url`
+    // before starting tests. Without it, that probe fails Node's own
+    // (OS-independent) certificate validation against the mkcert-issued
+    // cert, so Playwright never detects the already-running dev server
+    // and tries to start a second one on the same port instead.
+    ignoreHTTPSErrors: true,
     timeout: 60_000,
   },
 });
