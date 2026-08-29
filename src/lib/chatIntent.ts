@@ -71,12 +71,22 @@ const POLICY_SIGNAL_EN = [
   'documents required', 'documents needed', 'what documents', 'procedure',
   'process', 'rules', 'terms', 'eligibility criteria', 'how to open', 'guideline',
   'according to', 'bank policy', 'allowed limit',
+  // Workflow / approval-stage questions. The four-stage approval flow is
+  // documented in src/data/policies/loan-policy.md ("Loan Approval Workflow"),
+  // so these must route to policy retrieval rather than a general answer.
+  'approval stage', 'approval stages', 'approval process', 'approval workflow',
+  'workflow', 'stages', 'who approves', 'approval steps', 'loan approval',
 ];
 
 const POLICY_SIGNAL_AR = [
   'سياسة', 'سياسات', 'شرط', 'شروط', 'متطلبات', 'مستندات مطلوبة',
   'إجراء', 'إجراءات', 'قواعد', 'معايير', 'كيفية فتح', 'إرشادات',
   'وفقا لسياسة', 'حسب سياسة', 'الحد المسموح',
+  // Workflow / approval-stage questions (Arabic). Written in the natural
+  // definite form; normalize() strips "ال" on both sides so either form matches.
+  'مراحل الموافقة', 'خطوات الموافقة', 'سير الموافقة', 'مراحل الموافقه',
+  'الموافقة على القرض', 'الموافقة على طلب القرض', 'من يوافق', 'مراحل اعتماد',
+  'المستندات المطلوبة', 'الوثائق المطلوبة',
 ];
 
 // Broad advisory trigger — any loan-affordability/eligibility-flavored
@@ -86,12 +96,23 @@ const ADVISORY_EN = [
   'best installment', 'loan term', 'how many years', 'afford', 'affordability',
   'eligib', 'qualify', 'qualifies', 'suitable term', 'recommended term',
   'recommend', 'debt burden',
+  // INCIDENT this fixes: the most natural phrasing of the question — "Can
+  // customer BOP-100001 get a loan?" — matched none of the triggers above, so
+  // isAdvisory was false, the deterministic affordability calculation never
+  // ran, and the model was handed customer facts with no figures to explain.
+  'get a loan', 'obtain a loan', 'take a loan', 'take out a loan',
+  'apply for a loan', 'can he get', 'can she get', 'can they get',
+  'borrow', 'financial summary', 'loan of',
 ];
 
 const ADVISORY_AR = [
   'أفضل عدد سنوات', 'أفضل مدة', 'مدة القسط', 'مدة القرض', 'كم سنة',
   'يتحمل', 'مؤهل', 'يستحق', 'المدة المناسبة', 'المدة الموصى بها',
   'يوصى', 'عبء الدين',
+  // Arabic equivalents of the same phrasing gap (see the English note above).
+  'الحصول على قرض', 'يستطيع الحصول', 'تستطيع الحصول', 'هل يستطيع العميل',
+  'هل تستطيع العميلة', 'الحصول على تمويل', 'قرض بقيمة', 'الملخص المالي',
+  'يمكنه الحصول', 'يمكنها الحصول',
 ];
 
 // Narrower: the user wants a concrete installment TERM back, which cannot be
@@ -137,13 +158,53 @@ const CAPABILITY_AR = [
   'بماذا يمكنك مساعدتي',
 ];
 
+/**
+ * Arabic word normalization — mirrors normalizeArabicWord() in rag.ts so the
+ * classifier and the retriever agree on what two Arabic words "being the same"
+ * means.
+ *
+ * INCIDENT this fixes: matching was previously raw substring comparison, so a
+ * user writing the natural definite form "المستندات المطلوبة" never matched
+ * the signal "مستندات مطلوبة" — the "ال" prefix breaks the substring. Two of
+ * the six suggested Arabic questions therefore classified as 'general' and
+ * skipped policy retrieval entirely, producing an ungrounded answer. Both
+ * sides of the comparison are normalized here, so the definite article,
+ * diacritics, and letter variants can no longer decide whether retrieval runs.
+ */
+function normalizeArabicWord(word: string): string {
+  let w = word
+    .replace(/[ً-ْٰ]/g, '') // tashkeel/diacritics
+    .replace(/[إأآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/ة/g, 'ه');
+  // Same threshold as rag.ts: only strip "ال" when a real stem remains.
+  if (w.startsWith('ال') && w.length > 4) w = w.slice(2);
+  return w;
+}
+
+const ARABIC_CHAR = /[؀-ۿ]/;
+
+/**
+ * Lowercases, strips Arabic-script punctuation that would break a phrase
+ * match, and normalizes each Arabic word. Applied to BOTH the query and every
+ * keyword, so the two are always compared in the same normalized space.
+ */
 function normalize(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+  return text
+    .toLowerCase()
+    .replace(/[؟،؛]/g, ' ')
+    .split(/\s+/)
+    .map((w) => (ARABIC_CHAR.test(w) ? normalizeArabicWord(w) : w))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
 }
 
 function containsAny(text: string, terms: string[]): boolean {
   const n = normalize(text);
-  return terms.some((t) => n.includes(t.toLowerCase()));
+  return terms.some((t) => n.includes(normalize(t)));
 }
 
 export function extractAccountNumbers(query: string): string[] {

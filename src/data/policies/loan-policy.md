@@ -89,3 +89,24 @@ Standard processing times after a complete application is received:
 - القروض الشخصية: من 3 إلى 5 أيام عمل.
 - القروض التجارية: من 5 إلى 10 أيام عمل.
 - قد تتطلب الطلبات المعقدة أو ذات القيمة العالية وقتاً إضافياً للمراجعة وتقييماً من دائرة المخاطر.
+
+## Loan Approval Workflow | سير الموافقة على طلب القرض
+### English
+Every loan request moves through four sequential stages. A request is never visible to the next stage until the current stage approves it.
+
+1. A Branch Employee creates and submits a loan assessment. The submitted request enters the status `pending_branch_manager_approval`.
+2. A Branch Manager reviews the request. The Branch Manager may approve or reject it. If approved, the request moves to the Risk Department queue with status `pending`. If rejected, the request receives status `rejected`.
+3. The Risk Department reviews the Branch Manager-approved request. If the deterministic eligibility result is `not_eligible`, approving the request requires a documented override reason. If Risk approves, the request moves to the Audit Department queue with status `pending_audit_approval`. If Risk rejects, the request receives status `rejected`.
+4. The Audit Department performs the final review. If Audit approves, the request receives final status `audit_approved`. If Audit rejects, the request receives status `rejected`.
+5. Rejection is a soft rejection. The loan request is retained in the system for audit and compliance purposes rather than deleted.
+6. The internal AI assistant can explain workflow information, but it does not approve, reject, or override a loan decision.
+
+### العربية
+يمر كل طلب قرض بأربع مراحل متتابعة. لا يظهر الطلب للمرحلة التالية قبل أن توافق عليه المرحلة الحالية.
+
+1. يقوم موظف الفرع بإنشاء تقييم القرض وإرساله. تدخل المعاملة في حالة `pending_branch_manager_approval`.
+2. يراجع مدير الفرع الطلب. يمكنه الموافقة أو الرفض. عند الموافقة ينتقل الطلب إلى قائمة قسم المخاطر بحالة `pending`. وعند الرفض تصبح الحالة `rejected`.
+3. يراجع قسم المخاطر الطلب بعد موافقة مدير الفرع. إذا كانت نتيجة الأهلية deterministic هي `not_eligible`، فإن الموافقة تتطلب سبب تجاوز موثق. عند موافقة قسم المخاطر ينتقل الطلب إلى قائمة قسم التدقيق بحالة `pending_audit_approval`. وعند الرفض تصبح الحالة `rejected`.
+4. يقوم قسم التدقيق بالمراجعة النهائية. عند الموافقة النهائية تصبح الحالة `audit_approved`. وعند الرفض تصبح الحالة `rejected`.
+5. الرفض هو soft rejection، أي يتم الاحتفاظ بطلب القرض في النظام لأغراض التدقيق والامتثال ولا يتم حذفه.
+6. يستطيع المساعد الداخلي شرح سير العمل، لكنه لا يوافق أو يرفض أو يتجاوز قرار القرض.

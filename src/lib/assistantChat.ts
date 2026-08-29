@@ -168,6 +168,14 @@ export async function requestHybridAnswer(params: {
   customer: AssistantCustomerContext | null;
   advisory: AssistantAdvisoryResult | null;
   history?: ChatTurn[];
+  /**
+   * A fully-formed, already-correct structured briefing built locally from the
+   * customer record + deterministic advisory result. The model is instructed to
+   * present THIS content rather than assemble figures itself, which removes
+   * the opportunity to restate a number differently. Null for non-customer
+   * questions.
+   */
+  structuredSummary?: string | null;
 }): Promise<AssistantChatResult> {
   const payload = {
     query: params.query,
@@ -176,6 +184,7 @@ export async function requestHybridAnswer(params: {
     policyChunks: params.policyChunks,
     customer: params.customer,
     advisory: params.advisory,
+    structuredSummary: params.structuredSummary ?? null,
     history: (params.history ?? []).slice(-6).map((h) => ({ role: h.role, content: h.content })),
   };
 

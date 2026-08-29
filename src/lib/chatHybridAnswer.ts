@@ -38,8 +38,10 @@ import {
   toFoundCustomerContext,
   toNotFoundCustomerContext,
   buildAdvisoryResult,
+  buildStructuredCustomerAnswer,
   deterministicAnswer,
 } from '@/lib/chatAnswerComposition';
+import { parseTermYearsFromText } from '@/lib/chatLoanAdvisory';
 
 export type { AnswerSource, ChatAnswerResult };
 export { formatSourceLabel };
@@ -123,8 +125,20 @@ export async function answerHybridQuestion(
     });
   }
 
+  // Term named in the question (e.g. "over 5 years"). Reporting only — the
+  // deterministic engine still chooses the recommended term itself.
+  const requestedTermYears = parseTermYearsFromText(query);
+
+  // Built locally from the record + deterministic result, so the same correct
+  // content backs both the AI answer and the offline fallback.
+  const structuredSummary = customer
+    ? buildStructuredCustomerAnswer({ customer, advisory, language, requestedTermYears })
+    : null;
+
   if (!assistantAiEnabled()) {
-    return deterministicAnswer({ language, intent, policyChunks, customer, customerContext, advisory, citations });
+    return deterministicAnswer({
+      language, intent, policyChunks, customer, customerContext, advisory, citations, requestedTermYears,
+    });
   }
 
   try {
@@ -139,6 +153,7 @@ export async function answerHybridQuestion(
       })),
       customer: customerContext,
       advisory,
+      structuredSummary,
       history: options.history,
     });
 
@@ -156,6 +171,8 @@ export async function answerHybridQuestion(
     };
   } catch (err) {
     console.warn('[chatHybridAnswer] AI composition unavailable, degrading:', err);
-    return deterministicAnswer({ language, intent, policyChunks, customer, customerContext, advisory, citations });
+    return deterministicAnswer({
+      language, intent, policyChunks, customer, customerContext, advisory, citations, requestedTermYears,
+    });
   }
 }

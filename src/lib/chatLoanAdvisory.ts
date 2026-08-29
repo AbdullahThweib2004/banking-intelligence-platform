@@ -275,6 +275,28 @@ export function parseLoanAmountFromText(query: string): number | null {
   return numbers.length > 0 ? numbers[0] : null;
 }
 
+// "5 years", "over 5 years", "5 yrs", "لمدة 5 سنوات", "5 سنة".
+const TERM_RE = /(\d{1,2})\s*(?:years?|yrs?|سنوات|سنة)/i;
+
+/**
+ * Best-effort repayment-term extraction from free text, bounded to the same
+ * 1–30 year range the deterministic engine searches.
+ *
+ * This is REPORTING ONLY. recommendInstallmentTerm() still searches for the
+ * shortest eligible term itself — a term named in the question never
+ * overrides the engine's own recommendation, it is only echoed back so the
+ * answer can distinguish "you asked about 5 years" from "the engine
+ * recommends N years". Returns null when no term is stated.
+ */
+export function parseTermYearsFromText(query: string): number | null {
+  const withoutAccountNumbers = query.replace(/\bBOP-\d+\b/gi, ' ');
+  const match = withoutAccountNumbers.match(TERM_RE);
+  if (!match) return null;
+  const years = Number(match[1]);
+  if (!Number.isFinite(years) || years < MIN_TERM_YEARS || years > MAX_TERM_YEARS) return null;
+  return years;
+}
+
 export interface ResolvedAdvisoryInputs {
   loanAmount: number;
   loanAmountSource: 'query' | 'on_file' | 'missing';

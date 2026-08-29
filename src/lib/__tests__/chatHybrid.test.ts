@@ -411,7 +411,10 @@ describe('chatAnswerComposition: deterministicAnswer (AI-unavailable fallback)',
     const customerContext = toNotFoundCustomerContext(outcome);
     const result = deterministicAnswer({ ...base, language: 'en', intent: 'customer', customerContext });
     assert.equal(result.source, 'not_found');
-    assert.match(result.answer, /couldn't find/i);
+    // Wording updated to the structured not-found response:
+    // "No customer record was found for account number X. Please verify …"
+    assert.match(result.answer, /no customer record was found/i);
+    assert.match(result.answer, /verify/i);
     // The only number present must be the account number the user themselves
     // asked about — never a fabricated salary/balance/other figure.
     assert.match(result.answer, /BOP-999999/);

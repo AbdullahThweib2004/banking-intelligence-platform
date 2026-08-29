@@ -352,6 +352,237 @@ export function formatAdvisorySummary(advisory: AssistantAdvisoryResult, languag
     : `Even at the longest available term (${advisory.bestAttempt.termYears} years), the monthly installment of ${advisory.loanCurrency} ${fmtMoney(advisory.bestAttempt.monthlyInstallment)} still exceeds the ${fmtPct(advisory.dbrCap)} debt-burden cap. This loan amount may not be affordable right now.`;
 }
 
+// ===========================================================================
+// STRUCTURED CUSTOMER ANSWER BUILDERS
+//
+// These render the deterministic result as a readable, sectioned briefing
+// instead of a field dump. They are used TWICE:
+//   1. as the deterministic fallback shown when OpenRouter is unavailable, and
+//   2. as a `structured_summary` handed to the model as grounding, so the AI
+//      rewrites an already-correct answer rather than assembling one itself.
+//
+// Every number here comes from the customer record or the deterministic
+// advisory result. Nothing is computed, rounded differently, or invented. A
+// field that is absent is stated as absent, never guessed.
+// ===========================================================================
+
+const L = {
+  customerSummary: { en: 'Customer Financial Summary', ar: 'الملخص المالي للعميل' },
+  accountNumber: { en: 'Account number', ar: 'رقم الحساب' },
+  customerName: { en: 'Customer', ar: 'العميل' },
+  monthlyIncome: { en: 'Monthly income', ar: 'الدخل الشهري' },
+  monthlyObligations: { en: 'Monthly obligations', ar: 'الالتزامات الشهرية' },
+  existingLoans: { en: 'Existing loans', ar: 'القروض الحالية' },
+  employmentType: { en: 'Employment type', ar: 'نوع العمل' },
+  assessment: { en: 'Deterministic Loan Assessment', ar: 'التقييم الحسابي للقرض' },
+  loanAmount: { en: 'Loan amount', ar: 'مبلغ القرض' },
+  requestedTerm: { en: 'Requested term', ar: 'المدة المطلوبة' },
+  recommendedTerm: { en: 'Recommended term', ar: 'المدة الموصى بها' },
+  installment: { en: 'Estimated monthly installment', ar: 'القسط الشهري التقديري' },
+  dbr: { en: 'Debt burden ratio (DBR)', ar: 'نسبة عبء الدين (DBR)' },
+  ageAtMaturity: { en: 'Age at maturity', ar: 'العمر عند الاستحقاق' },
+  eligibility: { en: 'Eligibility', ar: 'الأهلية' },
+  eligible: { en: 'Appears eligible for this scenario', ar: 'يبدو مؤهلاً لهذا السيناريو' },
+  notEligible: { en: 'Not eligible for this scenario', ar: 'غير مؤهل لهذا السيناريو' },
+  conclusion: { en: 'Conclusion', ar: 'الخلاصة' },
+  infoNeeded: { en: 'Information Needed', ar: 'معلومات مطلوبة' },
+  nextStep: { en: 'Next Step', ar: 'الخطوة التالية' },
+  source: { en: 'Source', ar: 'المصدر' },
+  customerRecord: { en: 'Customer Record', ar: 'سجل العميل' },
+  calculator: { en: 'Deterministic Loan Calculator', ar: 'حاسبة القروض الحسابية' },
+  years: { en: 'years', ar: 'سنة' },
+  notOnFile: { en: 'not on file', ar: 'غير مسجل' },
+  restricted: { en: 'Loan restriction', ar: 'قيد على القروض' },
+  approvalNote: {
+    en: 'Final loan approval remains subject to the bank\'s four-stage approval workflow: Branch Employee submission, Branch Manager review, Risk Department review, and Audit Department final decision.',
+    ar: 'تبقى الموافقة النهائية على القرض خاضعة لسير الموافقات ذي المراحل الأربع: تقديم موظف الفرع، ثم مراجعة مدير الفرع، ثم مراجعة قسم المخاطر، ثم القرار النهائي لقسم التدقيق.',
+  },
+  overrideNote: {
+    en: 'A Risk Department override, if permitted by bank policy, requires a documented reason and remains subject to the approval workflow.',
+    ar: 'أي تجاوز من قسم المخاطر، إن سمحت به سياسة البنك، يتطلب سبباً موثقاً ويبقى خاضعاً لسير الموافقات.',
+  },
+  historicalNote: {
+    en: 'This is based on a previous assessment and is not a new loan decision.',
+    ar: 'هذا مبني على تقييم سابق وليس قراراً جديداً بشأن القرض.',
+  },
+} as const;
+
+const t = (key: keyof typeof L, lang: Lang): string => L[key][lang];
+
+const MISSING_INPUT_LABEL: Record<string, Record<Lang, string>> = {
+  loanAmount: { en: 'Requested loan amount', ar: 'مبلغ القرض المطلوب' },
+  loanTerm: { en: 'Repayment term', ar: 'مدة السداد' },
+};
+
+function labelMissing(field: string, lang: Lang): string {
+  return MISSING_INPUT_LABEL[field]?.[lang] ?? field;
+}
+
+/** "Customer Financial Summary" block — facts only, straight from the record. */
+export function buildCustomerFinancialBlock(customer: BankCustomerRecord, lang: Lang): string {
+  const monthlyObligations = monthlyObligationsFromExistingLoans(customer.existing_loans);
+  const lines = [
+    `${t('customerSummary', lang)}`,
+    `- ${t('customerName', lang)}: ${customer.customer_name}`,
+    `- ${t('accountNumber', lang)}: ${customer.account_number}`,
+    `- ${t('monthlyIncome', lang)}: ${fmtMoney(customer.monthly_income)}`,
+    `- ${t('monthlyObligations', lang)}: ${fmtMoney(monthlyObligations)}`,
+    `- ${t('existingLoans', lang)}: ${fmtMoney(customer.existing_loans)}`,
+    `- ${t('employmentType', lang)}: ${customer.employment_type}`,
+  ];
+  if (customer.loan_restricted) {
+    lines.push(
+      `- ${t('restricted', lang)}: ${customer.restriction_reason ?? (lang === 'ar' ? 'مقيّد' : 'restricted')}`
+    );
+  }
+  return lines.join('\n');
+}
+
+/** Source footer — only ever names sources that were genuinely used. */
+function buildSourceBlock(accountNumber: string, usedCalculator: boolean, lang: Lang): string {
+  const lines = [`${t('source', lang)}`, `- ${t('customerRecord', lang)}: ${accountNumber}`];
+  if (usedCalculator) lines.push(`- ${t('calculator', lang)}`);
+  return lines.join('\n');
+}
+
+/**
+ * Full structured customer answer. Chooses the right shape from the advisory
+ * result: a completed calculation, a missing-input follow-up, a below-minimum
+ * notice, or a qualitative headroom summary.
+ */
+export function buildStructuredCustomerAnswer(params: {
+  customer: BankCustomerRecord;
+  advisory: AssistantAdvisoryResult | null;
+  language: Lang;
+  requestedTermYears?: number | null;
+}): string {
+  const { customer, advisory, language: lang, requestedTermYears } = params;
+  const blocks: string[] = [buildCustomerFinancialBlock(customer, lang)];
+
+  if (!advisory) {
+    blocks.push(buildSourceBlock(customer.account_number, false, lang));
+    return blocks.join('\n\n');
+  }
+
+  // --- Missing inputs: ask, never assume. -------------------------------
+  if (advisory.kind === 'missing_inputs') {
+    const missing = advisory.missing.map((m) => `- ${labelMissing(m, lang)}`);
+    if (!advisory.missing.includes('loanTerm')) missing.push(`- ${labelMissing('loanTerm', lang)}`);
+    blocks.push(`${t('infoNeeded', lang)}\n${missing.join('\n')}`);
+    blocks.push(
+      `${t('nextStep', lang)}\n` +
+        (lang === 'ar'
+          ? 'يرجى تزويدي بمبلغ القرض المطلوب ومدة السداد لتقدير الأهلية.'
+          : 'Please provide the requested loan amount and repayment term so I can estimate eligibility.')
+    );
+    blocks.push(buildSourceBlock(customer.account_number, false, lang));
+    return blocks.join('\n\n');
+  }
+
+  // --- Below the bank-wide minimum: stated, never computed around. -------
+  if (advisory.kind === 'below_minimum') {
+    blocks.push(
+      `${t('assessment', lang)}\n` +
+        `- ${t('loanAmount', lang)}: ${advisory.loanCurrency} ${fmtMoney(advisory.loanAmount)}\n` +
+        `- ${t('eligibility', lang)}: ${
+          lang === 'ar'
+            ? `أقل من الحد الأدنى (${advisory.loanCurrency} ${fmtMoney(advisory.minimumRequired)})`
+            : `Below the minimum of ${advisory.loanCurrency} ${fmtMoney(advisory.minimumRequired)}`
+        }`
+    );
+    blocks.push(
+      `${t('nextStep', lang)}\n` +
+        (lang === 'ar'
+          ? 'يرجى تزويدي بمبلغ أكبر لإجراء الحساب.'
+          : 'Please provide a larger amount so the calculation can be run.')
+    );
+    blocks.push(buildSourceBlock(customer.account_number, true, lang));
+    return blocks.join('\n\n');
+  }
+
+  // --- Qualitative headroom (no specific amount named anywhere). ---------
+  if (advisory.kind === 'affordability_headroom') {
+    blocks.push(
+      `${t('assessment', lang)}\n` +
+        `- ${t('dbr', lang)}: ${fmtPct(advisory.currentDebtBurdenRatio)} / ${fmtPct(advisory.dbrCap)}\n` +
+        `- ${t('installment', lang)}: ${
+          lang === 'ar'
+            ? `حتى ${fmtMoney(advisory.maxAdditionalMonthlyInstallment)} إضافية قبل بلوغ الحد`
+            : `up to ${fmtMoney(advisory.maxAdditionalMonthlyInstallment)} more before reaching the cap`
+        }`
+    );
+    blocks.push(
+      `${t('infoNeeded', lang)}\n- ${labelMissing('loanAmount', lang)}\n- ${labelMissing('loanTerm', lang)}`
+    );
+    blocks.push(buildSourceBlock(customer.account_number, true, lang));
+    blocks.push(t('approvalNote', lang));
+    return blocks.join('\n\n');
+  }
+
+  // --- Completed deterministic calculation. ------------------------------
+  const assessment: string[] = [t('assessment', lang)];
+  assessment.push(`- ${t('loanAmount', lang)}: ${advisory.loanCurrency} ${fmtMoney(advisory.loanAmount)}`);
+  if (requestedTermYears != null) {
+    assessment.push(`- ${t('requestedTerm', lang)}: ${requestedTermYears} ${t('years', lang)}`);
+  }
+
+  if (advisory.status === 'ok') {
+    assessment.push(`- ${t('recommendedTerm', lang)}: ${advisory.recommendedTermYears} ${t('years', lang)}`);
+    assessment.push(`- ${t('installment', lang)}: ${advisory.loanCurrency} ${fmtMoney(advisory.monthlyInstallment)}`);
+    assessment.push(`- ${t('dbr', lang)}: ${fmtPct(advisory.debtBurdenRatio)} / ${fmtPct(advisory.dbrCap)}`);
+    assessment.push(
+      `- ${t('ageAtMaturity', lang)}: ${
+        advisory.ageAtMaturity == null
+          ? t('notOnFile', lang)
+          : `${advisory.ageAtMaturity} / ${advisory.ageAtMaturityCap}`
+      }`
+    );
+    assessment.push(`- ${t('eligibility', lang)}: ${t('eligible', lang)}`);
+    blocks.push(assessment.join('\n'));
+
+    blocks.push(
+      `${t('conclusion', lang)}\n` +
+        (lang === 'ar'
+          ? `بما أن نسبة عبء الدين ${fmtPct(advisory.debtBurdenRatio)} ضمن حد ${fmtPct(advisory.dbrCap)}${advisory.ageAtMaturity == null ? '' : ' وقاعدة العمر عند الاستحقاق مستوفاة'}، فإن العميل يبدو مؤهلاً مبدئياً لهذا السيناريو.`
+          : `Because the debt burden ratio of ${fmtPct(advisory.debtBurdenRatio)} is within the ${fmtPct(advisory.dbrCap)} limit${advisory.ageAtMaturity == null ? '' : ' and the age-at-maturity rule is satisfied'}, the customer appears eligible for this scenario.`)
+    );
+  } else {
+    assessment.push(`- ${t('recommendedTerm', lang)}: ${advisory.bestAttempt.termYears} ${t('years', lang)}`);
+    assessment.push(
+      `- ${t('installment', lang)}: ${advisory.loanCurrency} ${fmtMoney(advisory.bestAttempt.monthlyInstallment)}`
+    );
+    assessment.push(`- ${t('dbr', lang)}: ${fmtPct(advisory.bestAttempt.debtBurdenRatio)} / ${fmtPct(advisory.dbrCap)}`);
+    assessment.push(`- ${t('eligibility', lang)}: ${t('notEligible', lang)}`);
+    blocks.push(assessment.join('\n'));
+
+    blocks.push(
+      `${t('conclusion', lang)}\n` +
+        (lang === 'ar'
+          ? `حتى عند أطول مدة متاحة (${advisory.bestAttempt.termYears} سنة)، تبلغ نسبة عبء الدين ${fmtPct(advisory.bestAttempt.debtBurdenRatio)} وهي تتجاوز حد ${fmtPct(advisory.dbrCap)}. لذلك العميل غير مؤهل لهذا السيناريو وفق القواعد الحسابية الحالية.`
+          : `Even at the longest available term (${advisory.bestAttempt.termYears} years), the debt burden ratio is ${fmtPct(advisory.bestAttempt.debtBurdenRatio)}, which exceeds the ${fmtPct(advisory.dbrCap)} limit. The customer is therefore not eligible for this scenario under the current deterministic rules.`)
+    );
+    blocks.push(t('overrideNote', lang));
+  }
+
+  blocks.push(buildSourceBlock(customer.account_number, true, lang));
+  blocks.push(t('approvalNote', lang));
+  return blocks.join('\n\n');
+}
+
+/** "No customer record was found …" — the only correct answer to a failed lookup. */
+export function buildNotFoundAnswer(
+  context: Extract<AssistantCustomerContext, { found: false }>,
+  lang: Lang
+): string {
+  if (context.reason === 'not_found') {
+    return lang === 'ar'
+      ? `لم يتم العثور على أي سجل عميل لرقم الحساب ${context.accountNumber ?? ''}.\nيرجى التحقق من رقم الحساب والمحاولة مرة أخرى.`
+      : `No customer record was found for account number ${context.accountNumber ?? ''}.\nPlease verify the account number and try again.`;
+  }
+  if (context.reason === 'ambiguous') return AMBIGUOUS_TEXT[lang](context.accountNumbers ?? []);
+  return MISSING_IDENTIFIER_TEXT[lang];
+}
+
 export function formatNotFoundSummary(
   context: Extract<AssistantCustomerContext, { found: false }>,
   language: Lang
@@ -370,6 +601,8 @@ export function deterministicAnswer(params: {
   customerContext: AssistantCustomerContext | null;
   advisory: AssistantAdvisoryResult | null;
   citations: Citation[];
+  /** Term named in the question, echoed back for context. Never overrides the engine. */
+  requestedTermYears?: number | null;
 }): ChatAnswerResult {
   const { language, intent, policyChunks, customer, customerContext, advisory, citations } = params;
   const parts: string[] = [];
@@ -381,13 +614,24 @@ export function deterministicAnswer(params: {
     usedFile = true;
   }
   if (customer) {
-    parts.push(formatCustomerSummary(customer, language));
+    // Structured briefing rather than a one-line field dump: this is what the
+    // user actually sees whenever OpenRouter is unavailable, so it has to be
+    // readable on its own and carry the same sections the AI answer would.
+    parts.push(
+      buildStructuredCustomerAnswer({
+        customer,
+        advisory,
+        language,
+        requestedTermYears: params.requestedTermYears ?? null,
+      })
+    );
     usedDb = true;
   } else if (customerContext && customerContext.found === false) {
-    parts.push(formatNotFoundSummary(customerContext, language));
+    parts.push(buildNotFoundAnswer(customerContext, language));
     usedDb = true;
-  }
-  if (advisory) {
+  } else if (advisory) {
+    // Advisory without a customer record should not happen (the advisory is
+    // only ever built for a found customer), but never silently drop it.
     parts.push(formatAdvisorySummary(advisory, language));
     usedDb = true;
   }

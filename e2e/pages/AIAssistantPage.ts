@@ -12,6 +12,7 @@ export class AIAssistantPage {
   readonly chatInput: Locator;
   readonly sendButton: Locator;
   readonly sendErrorAlert: Locator;
+  readonly suggestedQuestions: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -19,6 +20,11 @@ export class AIAssistantPage {
     this.chatInput = page.getByTestId('ai-chat-input');
     this.sendButton = page.getByTestId('ai-send-button');
     this.sendErrorAlert = page.getByRole('alert');
+    this.suggestedQuestions = page.getByTestId('suggested-question');
+  }
+
+  suggestedByLang(lang: 'ar' | 'en'): Locator {
+    return this.page.locator(`[data-testid="suggested-question"][data-lang="${lang}"]`);
   }
 
   async goto() {
