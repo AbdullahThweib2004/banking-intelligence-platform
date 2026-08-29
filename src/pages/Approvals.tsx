@@ -722,11 +722,7 @@ export const Approvals: React.FC = () => {
 
         {/* Modification requests — visible to manager (view) and risk (view + review) */}
         {(isRole(ROLES.MANAGER) || isRole(ROLES.RISK)) && (
-          <ModificationRequestsPanel
-            embedded
-            enabled
-            canReview={isRole(ROLES.RISK)}
-          />
+          <ModificationRequestsPanel embedded enabled />
         )}
 
         {/* Saved risk explanation (read-only, loaded from the saved snapshot) */}

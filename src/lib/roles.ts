@@ -16,7 +16,11 @@ export const ROUTE_PERMISSIONS: Record<string, Role[]> = {
   '/approvals':       ['branch_employee', 'branch_manager', 'risk_department'],
   '/user-management': ['branch_manager'],
   '/audit-log':       ['risk_department'],
-  '/modification-requests': ['branch_manager', 'risk_department'],
+  // branch_employee has read-only access: they submit modification requests
+  // from Credit Risk and need to see which stage each one has reached
+  // (Pending Manager Review / Pending Risk Review / Approved / Rejected).
+  // RLS scopes them to their own rows and grants them no UPDATE policy.
+  '/modification-requests': ['branch_employee', 'branch_manager', 'risk_department'],
   // Audit's own dedicated dashboard — a fully separate account/role, never
   // shared with Risk's /approvals page.
   '/audit-monitoring': ['audit_department'],

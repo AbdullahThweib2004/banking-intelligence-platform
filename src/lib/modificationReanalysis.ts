@@ -22,34 +22,14 @@ import type { CreditScoreInput, ResultSource } from '@/lib/creditScoring';
 import { explainIfSchemaCacheError } from '@/lib/schemaVerification';
 
 /**
- * Fields that feed the ML/AI credit model. A change to any of these on an
- * approved modification triggers a full re-analysis. (`amount` is the
- * approval_requests column for the requested loan amount; `loan_amount`,
- * `salary` and `income` are accepted aliases used by modification requests.)
+ * Fields that feed the DETERMINISTIC credit engine. A change to any of them on
+ * a risk-approved modification triggers a full re-assessment.
+ *
+ * Re-exported from modificationWorkflow.ts, which owns the definition so the
+ * recalculation gate can be unit tested without pulling in the Supabase
+ * client. Kept exported from here too so existing importers keep working.
  */
-export const SCORING_FIELDS = new Set<string>([
-  'amount',
-  'loan_amount',
-  'monthly_income',
-  'salary',
-  'income',
-  'monthly_expenses',
-  'existing_loans',
-  'loan_to_income_ratio',
-  'employment_type',
-  // Bank-calculator-style fields that also feed the deterministic engine.
-  'loan_type',
-  'loan_currency',
-  'salary_currency',
-  'monthly_obligations',
-  'client_age',
-  'loan_term_years',
-]);
-
-export function isScoringField(field: string | null | undefined): boolean {
-  if (!field) return false;
-  return SCORING_FIELDS.has(field.trim().toLowerCase());
-}
+export { SCORING_FIELDS, isScoringField } from '@/lib/modificationWorkflow';
 
 /**
  * Best-effort write of the reanalysis_* status columns. These columns are added
@@ -145,6 +125,23 @@ export async function reanalyzeApplicationAfterModification(params: {
   const row = data as ApplicationScoringRow;
   const oldScore = row.risk_score;
   const oldCategory = row.risk_category;
+
+  // Audit: record that a re-assessment BEGAN. Without this, a run that never
+  // returns (tab closed, network dropped mid-flight) would leave no trace at
+  // all — the completed/failed entries below are only written once the run
+  // finishes. Best-effort: a logging failure must never block the assessment.
+  if (actor.id) {
+    await supabase.from('audit_logs').insert({
+      user_id: actor.id,
+      user_name: actor.name,
+      user_role: actor.role,
+      action: 'Loan re-analysis started after approved modification',
+      resource: 'approval_requests',
+      resource_id: applicationId,
+      details: `Field "${modifiedField}" changed — recomputing deterministic assessment from risk ${oldScore ?? '—'} (${oldCategory ?? '—'})`,
+      severity: 'info',
+    });
+  }
 
   try {
     // 2. Re-run the SAME assessment pipeline with the latest values. Bank-

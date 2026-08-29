@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { hasSavedRiskExplanation, type SavedRiskExplanation, type SavedTopFactor, type DerivedFeatures, type RecommendedAction, type ResultSource } from '@/lib/creditScoring';
 import { assessCreditRisk } from '@/lib/aiCreditAssessment';
+import { INITIAL_MODIFICATION_STATUS } from '@/lib/modificationWorkflow';
 import SignaturePad, { SignaturePadHandle } from '@/components/SignaturePad';
 import { LoanRequestDocument } from '@/components/LoanRequestDocument';
 import { validateSignaturePresent } from '@/lib/loanApplicationValidation';
@@ -814,7 +815,11 @@ export const CreditRisk: React.FC = () => {
       old_value: oldValue == null ? null : String(oldValue),
       new_value: objNewValue,
       reason: objReason.trim(),
-      status: 'pending',
+      // Two-stage workflow: every request enters the Branch Manager gate
+      // first and only reaches the Risk Department once the manager approves.
+      // The DB enforces this too (lmr_insert_roles WITH CHECK), so a stale
+      // client cannot submit straight into the risk queue.
+      status: INITIAL_MODIFICATION_STATUS,
     });
     setObjSubmitting(false);
 
@@ -831,8 +836,8 @@ export const CreditRisk: React.FC = () => {
     // Submission is also audit-logged automatically by the DB trigger.
     toast.success(
       language === 'ar'
-        ? 'تم إرسال طلب التعديل بنجاح'
-        : 'Modification request submitted successfully'
+        ? 'تم إرسال طلب التعديل إلى مدير الفرع للمراجعة.'
+        : 'Modification request submitted to the Branch Manager for review.'
     );
     resetObjection();
     setIsObjectionOpen(false);

@@ -12,8 +12,9 @@ export const ModificationRequests: React.FC = () => {
   const { language } = useLanguage();
   const { isRole } = useAuth();
 
-  const canView = isRole(ROLES.RISK) || isRole(ROLES.MANAGER);
-  const canReview = isRole(ROLES.RISK);
+  // Employees may VIEW (their own requests only — enforced by RLS, not here);
+  // manager and risk each act on their own workflow stage inside the panel.
+  const canView = isRole(ROLES.RISK) || isRole(ROLES.MANAGER) || isRole(ROLES.EMPLOYEE);
 
   if (!canView) {
     return (
@@ -26,8 +27,8 @@ export const ModificationRequests: React.FC = () => {
             </h2>
             <p className="text-muted-foreground">
               {language === 'ar'
-                ? 'هذه الصفحة متاحة للمدير ودائرة المخاطر فقط'
-                : 'This page is only accessible to managers and the risk department'}
+                ? 'هذه الصفحة متاحة لموظفي الفرع والمدير ودائرة المخاطر فقط'
+                : 'This page is only accessible to branch employees, managers, and the risk department'}
             </p>
           </Card>
         </div>
@@ -44,10 +45,10 @@ export const ModificationRequests: React.FC = () => {
           category={language === 'ar' ? 'طلبات التعديل' : 'Modification Requests'}
           title={language === 'ar' ? 'لوحة طلبات التعديل' : 'Modification Requests Panel'}
           description={language === 'ar'
-            ? 'يعرض طلبات التعديل/الاعتراض المقدمة على الطلبات المنتهية، ويتيح لدائرة المخاطر مراجعتها والموافقة عليها أو رفضها.'
-            : 'Lists modification/objection requests raised against finalized applications, and lets the risk department review, approve, or reject them.'}
+            ? 'يعرض طلبات التعديل/الاعتراض المقدمة على الطلبات المنتهية عبر مرحلتين: موافقة مدير الفرع ثم الموافقة النهائية من دائرة المخاطر.'
+            : 'Lists modification/objection requests raised against finalized applications, and moves them through two stages: Branch Manager approval, then final Risk Department approval.'}
         >
-          <ModificationRequestsPanel enabled={canView} canReview={canReview} />
+          <ModificationRequestsPanel enabled={canView} />
         </HelpTarget>
       </div>
     </DashboardLayout>

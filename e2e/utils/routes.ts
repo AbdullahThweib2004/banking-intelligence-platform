@@ -38,7 +38,9 @@ export const ROUTE_PERMISSIONS: Record<string, Role[]> = {
   [ROUTES.approvals]: [ROLES.EMPLOYEE, ROLES.MANAGER, ROLES.RISK],
   [ROUTES.userManagement]: [ROLES.MANAGER],
   [ROUTES.auditLog]: [ROLES.RISK],
-  [ROUTES.modificationRequests]: [ROLES.MANAGER, ROLES.RISK],
+  // branch_employee gained read-only access with the two-stage modification
+  // workflow (they submit requests and need to see which stage each reached).
+  [ROUTES.modificationRequests]: [ROLES.EMPLOYEE, ROLES.MANAGER, ROLES.RISK],
   [ROUTES.auditMonitoring]: [ROLES.AUDIT],
   [ROUTES.auditApprovals]: [ROLES.AUDIT],
 };

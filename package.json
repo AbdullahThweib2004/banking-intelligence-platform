@@ -28,6 +28,8 @@
     "test:account-opening": "playwright test --config=playwright.api.config.ts tests/api/account-opening.api.spec.ts",
     "test:loan-workflow": "playwright test --config=playwright.api.config.ts tests/api/loan-workflow.api.spec.ts",
     "test:assistant": "playwright test --config=playwright.api.config.ts tests/api/assistant.api.spec.ts",
+    "test:modification-workflow": "playwright test --config=playwright.api.config.ts tests/api/modification-workflow.api.spec.ts",
+    "e2e:modification-workflow": "playwright test e2e/tests/modification-workflow.spec.ts",
     "test:integration": "playwright test --config=playwright.api.config.ts tests/integration/system-flow.spec.ts",
     "test:openrouter-live": "RUN_LIVE_OPENROUTER_TESTS=true playwright test --config=playwright.api.config.ts -g \"OpenRouter live smoke test\"",
     "test:qa:part2": "npm run test:account-opening && npm run test:loan-workflow && npm run test:assistant && npm run test:integration",

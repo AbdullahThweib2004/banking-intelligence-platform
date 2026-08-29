@@ -19,6 +19,40 @@ const translations: Translations = {
   'nav.approvals': { en: 'Approvals', ar: 'الموافقات' },
   'nav.auditLog': { en: 'Audit Log', ar: 'سجل المراجعة' },
   'nav.modificationRequests': { en: 'Modification Requests', ar: 'طلبات التعديل' },
+
+  // Modification / objection workflow (two-stage: manager -> risk)
+  'mod.status.pendingManager': { en: 'Pending Manager Review', ar: 'بانتظار مراجعة المدير' },
+  'mod.status.pendingRisk': { en: 'Pending Risk Review', ar: 'بانتظار مراجعة المخاطر' },
+  'mod.status.approved': { en: 'Approved', ar: 'مقبول' },
+  'mod.status.rejected': { en: 'Rejected', ar: 'مرفوض' },
+  'mod.submitted': {
+    en: 'Modification request submitted to the Branch Manager for review.',
+    ar: 'تم إرسال طلب التعديل إلى مدير الفرع للمراجعة.',
+  },
+  'mod.managerApproved': {
+    en: 'Modification request approved and sent to the Risk Department for final review.',
+    ar: 'تمت الموافقة على طلب التعديل وإرساله إلى دائرة المخاطر للمراجعة النهائية.',
+  },
+  'mod.managerRejected': {
+    en: 'Modification request rejected. No changes were applied to the loan assessment.',
+    ar: 'تم رفض طلب التعديل. لم يتم تطبيق أي تغيير على تقييم القرض.',
+  },
+  'mod.riskApproved': {
+    en: 'Modification approved. The loan assessment has been recalculated using the updated value.',
+    ar: 'تمت الموافقة على التعديل. تم إعادة احتساب تقييم القرض بالقيمة المحدّثة.',
+  },
+  'mod.riskRejected': {
+    en: 'Modification request rejected by Risk Department. No changes were applied.',
+    ar: 'تم رفض طلب التعديل من دائرة المخاطر. لم يتم تطبيق أي تغيير.',
+  },
+  'mod.riskQueueArrived': {
+    en: 'A modification request approved by the Branch Manager is ready for Risk review.',
+    ar: 'وصل طلب تعديل وافق عليه المدير وهو جاهز لمراجعة دائرة المخاطر.',
+  },
+  'mod.recalculating': {
+    en: 'Recalculating the assessment and rate with the updated values...',
+    ar: 'إعادة احتساب التقييم والمعدل بالقيم المحدّثة...',
+  },
   'nav.users': { en: 'User Management', ar: 'إدارة المستخدمين' },
   'nav.auditMonitoring': { en: 'Audit Monitoring', ar: 'مراقبة التدقيق' },
   'nav.auditApprovals': { en: 'Loan Approvals', ar: 'موافقات القروض' },

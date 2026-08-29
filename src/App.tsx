@@ -94,7 +94,12 @@ const DASHBOARD_ROUTES: DashboardRouteConfig[] = [
     path: "/modification-requests",
     element: (
       <RequireAuth>
-        <ProtectedRoute allowedRoles={[ROLES.RISK, ROLES.MANAGER]}>
+        {/* EMPLOYEE is read-only here: they submit modification requests from
+            Credit Risk and need to track which stage each one reached. RLS
+            scopes them to their own rows and grants them no UPDATE policy, and
+            the panel renders no decision controls for them. Must stay in sync
+            with ROUTE_PERMISSIONS['/modification-requests'] in src/lib/roles.ts. */}
+        <ProtectedRoute allowedRoles={[ROLES.EMPLOYEE, ROLES.MANAGER, ROLES.RISK]}>
           <ModificationRequests />
         </ProtectedRoute>
       </RequireAuth>
